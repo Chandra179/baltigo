@@ -17,7 +17,7 @@ type DHTManager struct {
 
 // InitDHT initializes Kademlia DHT with bootstrap peers
 func (p *PeerInfo) InitDHT(ctx context.Context, h host.Host) (*DHTManager, error) {
-	kademliaDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeAuto))
+	kademliaDHT, err := dht.New(h, dht.Mode(dht.ModeAuto))
 	if err != nil {
 		return nil, err
 	}
