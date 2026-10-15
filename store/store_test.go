@@ -1,0 +1,147 @@
+package store
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+)
+
+func newKey(t *testing.T) (crypto.PrivKey, peer.ID) {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv, id
+}
+
+func openTemp(t *testing.T, priv crypto.PrivKey, path string) *Store {
+	t.Helper()
+	s, err := Open(path, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func TestContacts(t *testing.T) {
+	priv, _ := newKey(t)
+	s := openTemp(t, priv, filepath.Join(t.TempDir(), "sub", "db"))
+	_, alice := newKey(t)
+	_, bob := newKey(t)
+
+	if err := s.AddContact("Alice", alice); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddContact("alice", bob); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("duplicate name: got %v", err)
+	}
+	if err := s.AddContact("other", alice); !errors.Is(err, ErrPeerExists) {
+		t.Errorf("duplicate peer: got %v", err)
+	}
+	if err := s.AddContact("has space", bob); !errors.Is(err, ErrInvalidName) {
+		t.Errorf("invalid name: got %v", err)
+	}
+
+	for _, in := range []string{"alice", "ALICE", alice.String()} {
+		if id, err := s.Resolve(in); err != nil || id != alice {
+			t.Errorf("Resolve(%q) = %v, %v", in, id, err)
+		}
+	}
+	if _, err := s.Resolve("nobody"); err == nil {
+		t.Error("expected error for unknown name")
+	}
+	if s.NameOf(alice) != "Alice" || s.NameOf(bob) != "" {
+		t.Errorf("NameOf wrong: %q %q", s.NameOf(alice), s.NameOf(bob))
+	}
+
+	if err := s.RemoveContact("alice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveContact("alice"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("remove twice: got %v", err)
+	}
+}
+
+func TestHistoryPersistsAndIsOrdered(t *testing.T) {
+	priv, _ := newKey(t)
+	path := filepath.Join(t.TempDir(), "db")
+	_, alice := newKey(t)
+	_, bob := newKey(t)
+
+	s, err := Open(path, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Millisecond)
+	for i, text := range []string{"one", "two", "three"} {
+		e := Entry{Peer: alice, Incoming: i%2 == 0, Time: now.Add(time.Duration(i) * time.Second), Text: text}
+		if err := s.AppendMessage(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.AppendMessage(Entry{Peer: bob, Text: "for bob"})
+	s.Close()
+
+	s = openTemp(t, priv, path) // reopen: data survives
+	all, err := s.History(alice, 0)
+	if err != nil || len(all) != 3 || all[0].Text != "one" || all[2].Text != "three" || !all[0].Incoming || all[1].Incoming {
+		t.Fatalf("history = %+v, err %v", all, err)
+	}
+	last2, _ := s.History(alice, 2)
+	if len(last2) != 2 || last2[0].Text != "two" || last2[1].Text != "three" {
+		t.Errorf("limit: %+v", last2)
+	}
+	if h, _ := s.History(bob, 0); len(h) != 1 || h[0].Text != "for bob" {
+		t.Errorf("bob history: %+v", h)
+	}
+	if !all[0].Time.Equal(now) {
+		t.Errorf("time not preserved: %v vs %v", all[0].Time, now)
+	}
+}
+
+func TestEncryptedAtRest(t *testing.T) {
+	priv, _ := newKey(t)
+	path := filepath.Join(t.TempDir(), "db")
+	_, alice := newKey(t)
+	s, _ := Open(path, priv)
+	s.AddContact("SecretName", alice)
+	s.AppendMessage(Entry{Peer: alice, Text: "top secret text"})
+	s.Close()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"SecretName", "top secret text"} {
+		if bytesContains(raw, needle) {
+			t.Errorf("plaintext %q found in database file", needle)
+		}
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Errorf("db perms = %v, want 0600", st.Mode().Perm())
+	}
+
+	// a different identity key cannot read the data
+	other, _ := newKey(t)
+	s2 := openTemp(t, other, path)
+	if _, err := s2.History(alice, 0); !errors.Is(err, ErrCannotDecrypt) {
+		t.Errorf("history with wrong key: got %v", err)
+	}
+	if _, err := s2.Contacts(); !errors.Is(err, ErrCannotDecrypt) {
+		t.Errorf("contacts with wrong key: got %v", err)
+	}
+}
+
+func bytesContains(b []byte, s string) bool { return bytes.Contains(b, []byte(s)) }

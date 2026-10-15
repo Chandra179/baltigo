@@ -11,6 +11,9 @@ A decentralized peer-to-peer chat application built with libp2p that supports di
 - **NAT Traversal**: Built-in hole punching and NAT port mapping for firewall bypass
 - **Circuit Relay**: Support for relay nodes to facilitate connections between NAT'd peers
 - **Peer Store**: In-memory peer management with address caching
+- **Signed Messages**: Every message is signed with the sender's Ed25519 key and verified (sender, recipient, clock skew, replay) on receipt
+- **Access Control**: Optional peer allowlist and relay allowlist
+- **Contacts & History**: Named contacts and message history, stored in an embedded database with names and text encrypted using a key derived from your identity key
 
 ## Configuration
 
@@ -21,8 +24,16 @@ Create a `.env` file in the project root with the following configuration:
 ```bash
 # Relay server configuration
 RELAY_IP=99.0.0.5
-RELAY_TCP_PORT=2222
-RELAY_ID=12D3KooWExampleRelayPeerID...
+RELAY_TCP_PORT=2222   # the relay listens on this port for both TCP and UDP (QUIC)
+RELAY_ID=<base64 private key of the relay>
+
+# Peer identity (base64 private key, see `genkey`)
+PEER_ID=<base64 private key of the peer>
+
+# Optional
+PEER_ALLOWLIST=12D3KooW...,12D3KooW...   # only these peers may connect to you (empty = anyone)
+RELAY_ALLOWLIST=12D3KooW...,12D3KooW... # only these peers may use the relay (empty = open relay)
+PEER_DB=peers_db/me.db                  # contacts/history database (default peers_db/<peer id>.db)
 ```
 
 ### Configuration Parameters
@@ -62,10 +73,16 @@ Once running in peer mode, you can use the following commands:
 
 ### Connection Management
 - `ping <peer_id> <peer_addr>` - Test connectivity to a peer
-- `con <peer_id>` - Connect to a peer (tries direct, falls back to relay)
+- `con <name|peer_id>` - Connect to a peer (tries direct, falls back to relay)
+
+### Contacts and history
+- `contact [list]` - List saved contacts
+- `contact add <name> <peer_id>` - Save a contact (names are unique, no spaces)
+- `contact rm <name>` - Remove a contact (history is kept)
+- `history <name|peer_id> [n]` - Show the last n messages (default 20)
 
 ### Messaging
-- `send <peer_id> <message>` - Send a message to a connected peer
+- `send <name|peer_id> <message>` - Send a signed message to a peer
 
 ## Example Workflow
 
@@ -98,7 +115,7 @@ Once running in peer mode, you can use the following commands:
 1. **Start a peer**:
    ```bash
    ./p2p-chat --mode peer
-   Peer initialized - ID: 12D3KooWExamplePeerID, Protocols: [/private-chat/1.0.0]
+   Peer initialized - ID: 12D3KooWExamplePeerID, Protocols: [/private-chat/2.0.0]
    Successfully connected to relay: 12D3KooWExampleRelayID
    ```
 
@@ -119,7 +136,7 @@ Once running in peer mode, you can use the following commands:
    ```
    > con 12D3KooWExampleTargetPeer
    success direct connection
-   Remote supports: [/private-chat/1.0.0 /libp2p/circuit/relay/0.2.0/hop]
+   Remote supports: [/private-chat/2.0.0 /libp2p/circuit/relay/0.2.0/hop]
    Successfully connected to peer: 12D3KooWExampleTargetPeer
    ```
 

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"p2p/access"
+	"p2p/store"
 	"sync/atomic"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -19,6 +21,8 @@ type PeerInfo struct {
 	PeerID     peer.ID
 	Host       host.Host
 	PeerStore  *PeerStore
+	// Store persists contacts and message history. May be nil.
+	Store *store.Store
 
 	// OnMessage is called for each verified incoming message.
 	OnMessage func(from peer.ID, text string)
@@ -27,7 +31,7 @@ type PeerInfo struct {
 	seq    atomic.Uint64
 }
 
-func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.AddrInfo) (*PeerInfo, error) {
+func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.AddrInfo, st *store.Store) (*PeerInfo, error) {
 	if peerPrivKey == nil {
 		return nil, fmt.Errorf("private key is required")
 	}
@@ -49,9 +53,9 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.Ad
 		ps.Close()
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
-	p := PeerInfo{Host: h, PeerStore: ps}
+	p := PeerInfo{Host: h, PeerStore: ps, Store: st}
 	p.OnMessage = func(from peer.ID, text string) {
-		fmt.Printf("[%s] %s\n", from, text)
+		fmt.Printf("[%s] %s\n", p.DisplayName(from), text)
 	}
 	p.ChatHandler()
 	log.Printf("Peer initialized - ID: %s, Protocols: %v", h.ID(), h.Mux().Protocols())
@@ -72,4 +76,24 @@ func (p *PeerInfo) Ping(id peer.ID, addr string) error {
 	canDial := p.Host.Network().CanDial(id, maddr)
 	log.Printf("Can dial %s at %s: %v", id, addr, canDial)
 	return nil
+}
+
+// DisplayName returns the contact name for id, or the peer ID if it is unknown.
+func (p *PeerInfo) DisplayName(id peer.ID) string {
+	if p.Store != nil {
+		if name := p.Store.NameOf(id); name != "" {
+			return name
+		}
+	}
+	return id.String()
+}
+
+func (p *PeerInfo) record(id peer.ID, incoming bool, text string) {
+	if p.Store == nil {
+		return
+	}
+	err := p.Store.AppendMessage(store.Entry{Peer: id, Incoming: incoming, Time: time.Now(), Text: text})
+	if err != nil {
+		log.Printf("Failed to save message: %v", err)
+	}
 }

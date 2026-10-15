@@ -21,6 +21,8 @@ type Config struct {
 	PeerPrivKey crypto.PrivKey // Will be used as peer ID
 	// PeerAllowlist limits inbound connections to these peers (empty = allow all).
 	PeerAllowlist []peer.ID
+	// PeerDB is the path of the contacts/history database (default peers_db/<peer id>.db).
+	PeerDB string
 	//
 	RelayPort    string
 	RelayID      peer.ID
@@ -61,6 +63,7 @@ func LoadConfig() (*Config, error) {
 		PeerID:        os.Getenv("PEER_ID"),
 		PeerPrivKey:   peerPrivKey,
 		PeerAllowlist: peerAllow,
+		PeerDB:        os.Getenv("PEER_DB"),
 		//
 		RelayPort:      os.Getenv("RELAY_TCP_PORT"),
 		RelayID:        relayID,

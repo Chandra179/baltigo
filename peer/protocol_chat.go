@@ -43,6 +43,7 @@ func (p *PeerInfo) ChatHandler() {
 			s.Reset()
 			return
 		}
+		p.record(remote, true, msg.Text)
 		if p.OnMessage != nil {
 			p.OnMessage(remote, msg.Text)
 		}
@@ -87,5 +88,9 @@ func (p *PeerInfo) SendSimple(targetPeerID peer.ID, text string) error {
 		return err
 	}
 	defer stream.Close()
-	return writeFrame(stream, msg)
+	if err := writeFrame(stream, msg); err != nil {
+		return err
+	}
+	p.record(targetPeerID, false, text)
+	return nil
 }

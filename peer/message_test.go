@@ -2,6 +2,8 @@ package peer
 
 import (
 	"bytes"
+	"p2p/store"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -136,5 +138,48 @@ func TestSendReceiveBetweenHosts(t *testing.T) {
 	case r := <-got:
 		t.Fatalf("replayed message delivered: %+v", r)
 	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestMessagesArePersisted(t *testing.T) {
+	a, b := newTestPeer(t), newTestPeer(t)
+	open := func(p *PeerInfo) *store.Store {
+		st, err := store.Open(filepath.Join(t.TempDir(), "db"), p.Host.Peerstore().PrivKey(p.Host.ID()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		p.Store = st
+		return st
+	}
+	sa, sb := open(a), open(b)
+	if err := sb.AddContact("alice", a.Host.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.DisplayName(a.Host.ID()); got != "alice" {
+		t.Errorf("DisplayName = %q, want alice", got)
+	}
+
+	got := make(chan struct{}, 1)
+	b.OnMessage = func(peer.ID, string) { got <- struct{}{} }
+	if err := a.Host.Connect(t.Context(), peer.AddrInfo{ID: b.Host.ID(), Addrs: b.Host.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SendSimple(b.Host.ID(), "persist me"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("message not received")
+	}
+
+	sent, _ := sa.History(b.Host.ID(), 0)
+	if len(sent) != 1 || sent[0].Incoming || sent[0].Text != "persist me" {
+		t.Errorf("sender history = %+v", sent)
+	}
+	recv, _ := sb.History(a.Host.ID(), 0)
+	if len(recv) != 1 || !recv[0].Incoming || recv[0].Text != "persist me" {
+		t.Errorf("receiver history = %+v", recv)
 	}
 }

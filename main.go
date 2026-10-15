@@ -11,6 +11,9 @@ import (
 	"p2p/cryptoutils"
 	mypeer "p2p/peer"
 	"p2p/relay"
+	"p2p/store"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -32,8 +35,13 @@ func (cli *CLIManager) initPeer() error {
 	if err != nil {
 		return err
 	}
-	p, err := mypeer.InitPeerHost(cli.config.PeerPrivKey, cli.config.PeerAllowlist, relayInfo)
+	st, err := cli.openStore()
 	if err != nil {
+		return err
+	}
+	p, err := mypeer.InitPeerHost(cli.config.PeerPrivKey, cli.config.PeerAllowlist, relayInfo, st)
+	if err != nil {
+		st.Close()
 		return fmt.Errorf("failed to init peer: %v", err)
 	}
 	cli.peer = p
@@ -41,6 +49,109 @@ func (cli *CLIManager) initPeer() error {
 		log.Printf("Failed to connect to relay: %v", err)
 	}
 	return nil
+}
+
+func (cli *CLIManager) openStore() (*store.Store, error) {
+	path := cli.config.PeerDB
+	if path == "" {
+		id, err := peer.IDFromPrivateKey(cli.config.PeerPrivKey)
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join("peers_db", id.String()+".db")
+	}
+	st, err := store.Open(path, cli.config.PeerPrivKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open store: %w", err)
+	}
+	return st, nil
+}
+
+// resolvePeer accepts a contact name or a peer ID.
+func (cli *CLIManager) resolvePeer(s string) (peer.ID, error) {
+	return cli.peer.Store.Resolve(s)
+}
+
+func (cli *CLIManager) handleContact(args []string) {
+	st := cli.peer.Store
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	switch args[0] {
+	case "add":
+		if len(args) != 3 {
+			fmt.Println("Usage: contact add <name> <peer_id>")
+			return
+		}
+		id, err := peer.Decode(args[2])
+		if err != nil {
+			fmt.Printf("Invalid peer ID: %v\n", err)
+			return
+		}
+		if err := st.AddContact(args[1], id); err != nil {
+			fmt.Printf("Failed to add contact: %v\n", err)
+			return
+		}
+		fmt.Printf("Added contact %s\n", args[1])
+	case "rm":
+		if len(args) != 2 {
+			fmt.Println("Usage: contact rm <name>")
+			return
+		}
+		if err := st.RemoveContact(args[1]); err != nil {
+			fmt.Printf("Failed to remove contact: %v\n", err)
+			return
+		}
+		fmt.Printf("Removed contact %s\n", args[1])
+	case "list":
+		contacts, err := st.Contacts()
+		if err != nil {
+			fmt.Printf("Failed to list contacts: %v\n", err)
+			return
+		}
+		if len(contacts) == 0 {
+			fmt.Println("No contacts. Use: contact add <name> <peer_id>")
+		}
+		for _, c := range contacts {
+			fmt.Printf("  %-20s %s\n", c.Name, c.ID)
+		}
+	default:
+		fmt.Println("Usage: contact [list | add <name> <peer_id> | rm <name>]")
+	}
+}
+
+func (cli *CLIManager) handleHistory(args []string) {
+	if len(args) < 1 || len(args) > 2 {
+		fmt.Println("Usage: history <name|peer_id> [count]")
+		return
+	}
+	id, err := cli.resolvePeer(args[0])
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return
+	}
+	limit := 20
+	if len(args) == 2 {
+		if limit, err = strconv.Atoi(args[1]); err != nil || limit < 1 {
+			fmt.Println("count must be a positive number")
+			return
+		}
+	}
+	entries, err := cli.peer.Store.History(id, limit)
+	if err != nil {
+		fmt.Printf("Failed to read history: %v\n", err)
+		return
+	}
+	if len(entries) == 0 {
+		fmt.Println("No messages")
+	}
+	for _, e := range entries {
+		who := "me"
+		if e.Incoming {
+			who = cli.peer.DisplayName(id)
+		}
+		fmt.Printf("%s  %s: %s\n", e.Time.Format("2006-01-02 15:04:05"), who, e.Text)
+	}
 }
 
 func (cli *CLIManager) handlePing(args []string) {
@@ -63,14 +174,14 @@ func (cli *CLIManager) handlePing(args []string) {
 
 func (cli *CLIManager) handleConnect(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: con <peer_id>")
+		fmt.Println("Usage: con <name|peer_id>")
 		return
 	}
 
 	idStr := args[0]
-	pID, err := peer.Decode(idStr)
+	pID, err := cli.resolvePeer(idStr)
 	if err != nil {
-		fmt.Printf("Invalid peer ID: %v\n", err)
+		fmt.Printf("%v\n", err)
 		return
 	}
 
@@ -132,16 +243,16 @@ func (cli *CLIManager) handleDHT() {
 
 func (cli *CLIManager) handleSend(args []string) {
 	if len(args) < 2 {
-		fmt.Println("Usage: send <peer_id> <message>")
+		fmt.Println("Usage: send <name|peer_id> <message>")
 		return
 	}
 
 	targetPeerIDStr := args[0]
 	msg := strings.Join(args[1:], " ")
 
-	decodedPeerID, err := peer.Decode(targetPeerIDStr)
+	decodedPeerID, err := cli.resolvePeer(targetPeerIDStr)
 	if err != nil {
-		fmt.Printf("Invalid peer ID: %v\n", err)
+		fmt.Printf("%v\n", err)
 		return
 	}
 
@@ -182,9 +293,13 @@ func (cli *CLIManager) find(args []string) {
 func (cli *CLIManager) handleHelp() {
 	fmt.Println("Available commands:")
 	fmt.Println("  ping <peer_id> <peer_addr>  - Ping a peer")
-	fmt.Println("  con <peer_id>               - Connect to a peer")
+	fmt.Println("  con <name|peer_id>          - Connect to a peer")
 	fmt.Println("  dht                         - Discover peers via DHT")
-	fmt.Println("  send <peer_id> <message>    - Send message to peer")
+	fmt.Println("  send <name|peer_id> <msg>   - Send message to peer")
+	fmt.Println("  contact [list]              - List contacts")
+	fmt.Println("  contact add <name> <peer_id> - Save a contact")
+	fmt.Println("  contact rm <name>           - Remove a contact")
+	fmt.Println("  history <name|peer_id> [n]  - Show last n messages (default 20)")
 	fmt.Println("  genkey                      - Generate new Ed25519 key")
 	fmt.Println("  list                        - List discovered peers")
 	fmt.Println("  help                        - Show this help")
@@ -212,6 +327,7 @@ func (cli *CLIManager) runPeerMode() {
 
 		if input == "exit" {
 			fmt.Println("Exiting...")
+			cli.peer.Store.Close()
 			os.Exit(0)
 		}
 
@@ -228,6 +344,10 @@ func (cli *CLIManager) runPeerMode() {
 			cli.handleDHT()
 		case "send":
 			cli.handleSend(args)
+		case "contact":
+			cli.handleContact(args)
+		case "history":
+			cli.handleHistory(args)
 		case "genkey":
 			cli.handleGenkey()
 		case "list":
