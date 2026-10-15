@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"p2p/access"
+	"sync/atomic"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -20,6 +21,12 @@ type PeerInfo struct {
 	PeerID     peer.ID
 	Host       host.Host
 	PeerStore  *PeerStore
+
+	// OnMessage is called for each verified incoming message.
+	OnMessage func(from peer.ID, text string)
+
+	replay *replayGuard
+	seq    atomic.Uint64
 }
 
 func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relayID peer.ID) (*PeerInfo, error) {
@@ -43,6 +50,9 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relayID peer.
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 	p := PeerInfo{Host: h, PeerStore: ps}
+	p.OnMessage = func(from peer.ID, text string) {
+		fmt.Printf("[%s] %s\n", from, text)
+	}
 	p.ChatHandler()
 	log.Printf("Peer initialized - ID: %s, Protocols: %v", h.ID(), h.Mux().Protocols())
 
