@@ -13,12 +13,9 @@ import (
 )
 
 func RunRelay(cfg *config.Config) {
-	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", cfg.RelayPort)
-	advertiseAddr := fmt.Sprintf("/ip4/%s/tcp/%s", cfg.RelayIP, cfg.RelayPort)
-
-	advertiseMA, err := ma.NewMultiaddr(advertiseAddr)
+	info, err := cfg.RelayAddrInfo()
 	if err != nil {
-		fmt.Printf("Invalid relay advertise address: %v\n", err)
+		fmt.Printf("%v\n", err)
 		return
 	}
 
@@ -28,10 +25,12 @@ func RunRelay(cfg *config.Config) {
 
 	r, err := libp2p.New(
 		libp2p.Identity(cfg.RelayPrivKey),
-		libp2p.ListenAddrStrings(listenAddr),
+		libp2p.ListenAddrStrings(cfg.RelayListenAddrs()...),
 		libp2p.AddrsFactory(func([]ma.Multiaddr) []ma.Multiaddr {
-			return []ma.Multiaddr{advertiseMA}
+			return info.Addrs
 		}),
+		// A relay is public by definition; without this the service only starts after AutoNAT confirms it.
+		libp2p.ForceReachabilityPublic(),
 		libp2p.EnableRelayService(relayv2.WithACL(access.NewRelayACL(cfg.RelayAllowlist))),
 	)
 	if err != nil {

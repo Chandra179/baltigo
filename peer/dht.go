@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"p2p/config"
+	"time"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -29,8 +30,22 @@ func (p *PeerInfo) InitDHT(ctx context.Context, h host.Host, bootstrap peer.Addr
 	if err := h.Connect(ctx, bootstrap); err != nil {
 		return nil, fmt.Errorf("failed to connect to bootstrap peer: %w", err)
 	}
+	// The bootstrap peer is added to the routing table asynchronously, once identify
+	// confirms it speaks our DHT protocol.
+	if err := waitForRoutingTable(ctx, kademliaDHT, 10*time.Second); err != nil {
+		return nil, err
+	}
 	if err := kademliaDHT.Bootstrap(ctx); err != nil {
 		return nil, err
+	}
+	// Wait for the routing table to be populated so Advertise/FindPeers have peers to query.
+	select {
+	case err := <-kademliaDHT.RefreshRoutingTable():
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh routing table: %w", err)
+		}
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 	return &DHTManager{
 		DHT:       kademliaDHT,
@@ -55,4 +70,19 @@ func (d *DHTManager) FindPeers(ctx context.Context, rendezvous string) (<-chan p
 		return nil, err
 	}
 	return peerChan, nil
+}
+
+func waitForRoutingTable(ctx context.Context, d *dht.IpfsDHT, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for d.RoutingTable().Size() == 0 {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return fmt.Errorf("bootstrap peer was not added to the routing table: %w", ctx.Err())
+		}
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // DHTProtocolPrefix isolates our DHT from the public IPFS one.
@@ -67,4 +68,33 @@ func LoadConfig() (*Config, error) {
 		RelayIP:        os.Getenv("RELAY_IP"),
 		RelayAllowlist: relayAllow,
 	}, nil
+}
+
+// RelayAddrInfo returns the relay's peer ID with its TCP and QUIC addresses.
+func (c *Config) RelayAddrInfo() (peer.AddrInfo, error) {
+	addrs, err := c.relayAddrs()
+	if err != nil {
+		return peer.AddrInfo{}, err
+	}
+	return peer.AddrInfo{ID: c.RelayID, Addrs: addrs}, nil
+}
+
+func (c *Config) relayAddrs() ([]ma.Multiaddr, error) {
+	var addrs []ma.Multiaddr
+	for _, format := range []string{"/ip4/%s/tcp/%s", "/ip4/%s/udp/%s/quic-v1"} {
+		a, err := ma.NewMultiaddr(fmt.Sprintf(format, c.RelayIP, c.RelayPort))
+		if err != nil {
+			return nil, fmt.Errorf("invalid relay address: %w", err)
+		}
+		addrs = append(addrs, a)
+	}
+	return addrs, nil
+}
+
+// RelayListenAddrs returns the addresses the relay listens on (TCP and QUIC).
+func (c *Config) RelayListenAddrs() []string {
+	return []string{
+		fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", c.RelayPort),
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", c.RelayPort),
+	}
 }

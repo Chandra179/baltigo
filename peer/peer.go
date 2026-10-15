@@ -1,7 +1,6 @@
 package peer
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"p2p/access"
@@ -12,7 +11,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	rhost "github.com/libp2p/go-libp2p/p2p/host/routed"
-	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -29,7 +27,7 @@ type PeerInfo struct {
 	seq    atomic.Uint64
 }
 
-func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relayID peer.ID) (*PeerInfo, error) {
+func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.AddrInfo) (*PeerInfo, error) {
 	if peerPrivKey == nil {
 		return nil, fmt.Errorf("private key is required")
 	}
@@ -40,10 +38,12 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relayID peer.
 	// TODO: configure ip and port for listen address
 	h, err := libp2p.New(
 		libp2p.Identity(peerPrivKey),
-		libp2p.ConnectionGater(access.NewGater(allowlist, relayID)),
+		libp2p.ConnectionGater(access.NewGater(allowlist, relay.ID)),
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
 		libp2p.EnableRelay(),
+		// Reserves relay slots and advertises /p2p-circuit addresses when we are behind a NAT.
+		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{relay}),
 	)
 	if err != nil {
 		ps.Close()
@@ -57,29 +57,6 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relayID peer.
 	log.Printf("Peer initialized - ID: %s, Protocols: %v", h.ID(), h.Mux().Protocols())
 
 	return &p, nil
-}
-
-func (p *PeerInfo) ConnectAndReserveRelay(relayID peer.ID, relayIP string, relayPort string) error {
-	if relayIP == "" || relayPort == "" {
-		return fmt.Errorf("relay IP and port are required")
-	}
-	addr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%s", relayIP, relayPort))
-	if err != nil {
-		return fmt.Errorf("invalid relay address: %w", err)
-	}
-	addrInfo := peer.AddrInfo{
-		ID:    relayID,
-		Addrs: []ma.Multiaddr{addr},
-	}
-	if err := p.Host.Connect(context.Background(), addrInfo); err != nil {
-		return fmt.Errorf("failed to connect to relay: %w", err)
-	}
-	_, err = client.Reserve(context.Background(), p.Host, addrInfo)
-	if err != nil {
-		return fmt.Errorf("failed to reserve relay: %w", err)
-	}
-	log.Printf("Successfully connected to relay: %s", relayID)
-	return nil
 }
 
 func (p *PeerInfo) Ping(id peer.ID, addr string) error {

@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	ma "github.com/multiformats/go-multiaddr"
 )
 
 type CLIManager struct {
@@ -29,12 +28,18 @@ func NewCLIManager(cfg *config.Config) *CLIManager {
 }
 
 func (cli *CLIManager) initPeer() error {
-	p, err := mypeer.InitPeerHost(cli.config.PeerPrivKey, cli.config.PeerAllowlist, cli.config.RelayID)
+	relayInfo, err := cli.config.RelayAddrInfo()
+	if err != nil {
+		return err
+	}
+	p, err := mypeer.InitPeerHost(cli.config.PeerPrivKey, cli.config.PeerAllowlist, relayInfo)
 	if err != nil {
 		return fmt.Errorf("failed to init peer: %v", err)
 	}
 	cli.peer = p
-	p.ConnectAndReserveRelay(cli.config.RelayID, cli.config.RelayIP, cli.config.RelayPort)
+	if err := p.Host.Connect(context.Background(), relayInfo); err != nil {
+		log.Printf("Failed to connect to relay: %v", err)
+	}
 	return nil
 }
 
@@ -89,15 +94,12 @@ func (cli *CLIManager) handleConnect(args []string) {
 }
 
 func (cli *CLIManager) handleDHT() {
-	relayAddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%s", cli.config.RelayIP, cli.config.RelayPort))
+	relayInfo, err := cli.config.RelayAddrInfo()
 	if err != nil {
-		fmt.Printf("Invalid relay address: %v\n", err)
+		fmt.Printf("%v\n", err)
 		return
 	}
-	dm, err := cli.peer.InitDHT(context.Background(), cli.peer.Host, peer.AddrInfo{
-		ID:    cli.config.RelayID,
-		Addrs: []ma.Multiaddr{relayAddr},
-	})
+	dm, err := cli.peer.InitDHT(context.Background(), cli.peer.Host, relayInfo)
 	if err != nil {
 		fmt.Printf("Failed to init DHT: %v\n", err)
 		return
