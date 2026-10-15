@@ -30,6 +30,8 @@ type Config struct {
 	RelayIP      string
 	// RelayAllowlist limits relay reservations and relayed connections (empty = open relay).
 	RelayAllowlist []peer.ID
+	// RelayDB is the path of the relay mailbox database (default relay_db/mailbox.db).
+	RelayDB string
 }
 
 func LoadConfig() (*Config, error) {
@@ -70,6 +72,7 @@ func LoadConfig() (*Config, error) {
 		RelayPrivKey:   relayPrivKey,
 		RelayIP:        os.Getenv("RELAY_IP"),
 		RelayAllowlist: relayAllow,
+		RelayDB:        os.Getenv("RELAY_DB"),
 	}, nil
 }
 

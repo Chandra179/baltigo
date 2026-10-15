@@ -13,6 +13,7 @@ A decentralized peer-to-peer chat application built with libp2p that supports di
 - **Peer Store**: In-memory peer management with address caching
 - **Signed Messages**: Every message is signed with the sender's Ed25519 key and verified (sender, recipient, clock skew, replay) on receipt
 - **Access Control**: Optional peer allowlist and relay allowlist
+- **Offline Messages**: If a peer is unreachable, the message is sealed end-to-end (X25519 key agreement with a NaCl box (XSalsa20-Poly1305), fresh ephemeral key per message) and left in the relay's mailbox for up to 7 days; the relay cannot read it
 - **Contacts & History**: Named contacts and message history, stored in an embedded database with names and text encrypted using a key derived from your identity key
 
 ## Configuration
@@ -34,6 +35,7 @@ PEER_ID=<base64 private key of the peer>
 PEER_ALLOWLIST=12D3KooW...,12D3KooW...   # only these peers may connect to you (empty = anyone)
 RELAY_ALLOWLIST=12D3KooW...,12D3KooW... # only these peers may use the relay (empty = open relay)
 PEER_DB=peers_db/me.db                  # contacts/history database (default peers_db/<peer id>.db)
+RELAY_DB=relay_db/mailbox.db            # relay mailbox database (default relay_db/mailbox.db)
 ```
 
 ### Configuration Parameters
@@ -82,7 +84,8 @@ Once running in peer mode, you can use the following commands:
 - `history <name|peer_id> [n]` - Show the last n messages (default 20)
 
 ### Messaging
-- `send <name|peer_id> <message>` - Send a signed message to a peer
+- `send <name|peer_id> <message>` - Send a signed message to a peer. If the peer is offline it is queued on the relay
+- `sync` - Check the relay for messages received while you were offline (also done at startup and every 30 seconds)
 
 ## Example Workflow
 
@@ -155,3 +158,11 @@ Once running in peer mode, you can use the following commands:
 - [libp2p Documentation](https://docs.libp2p.io/)
 - [Kademlia DHT Specification](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf)
 - [Circuit Relay Specification](https://github.com/libp2p/specs/tree/master/relay)
+
+## Offline delivery and its limits
+
+- Messages to an unreachable peer are signed by you, sealed to the recipient's public key and stored on the relay. The recipient verifies the signature, checks the message is addressed to them and drops duplicates and replays.
+- The relay can see who leaves a message for whom and when, but not the contents.
+- Each recipient has at most 200 waiting messages of up to 64 KiB, kept for 7 days. Set `RELAY_ALLOWLIST` so only your own peers can use the mailbox.
+- Sealing uses the recipient's long-term key, so someone who later steals that key could read captured mailbox traffic. Live messages are protected by the transport handshake.
+- Only Ed25519 identities (the `genkey` default) can receive offline messages.

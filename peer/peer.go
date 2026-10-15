@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	rhost "github.com/libp2p/go-libp2p/p2p/host/routed"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -24,9 +25,13 @@ type PeerInfo struct {
 	// Store persists contacts and message history. May be nil.
 	Store *store.Store
 
+	// Relay is the relay (and mailbox) used for offline delivery. Zero value disables it.
+	Relay peer.AddrInfo
+
 	// OnMessage is called for each verified incoming message.
 	OnMessage func(from peer.ID, text string)
 
+	allow  access.Allowlist
 	replay *replayGuard
 	seq    atomic.Uint64
 }
@@ -53,7 +58,9 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.Ad
 		ps.Close()
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
-	p := PeerInfo{Host: h, PeerStore: ps, Store: st}
+	// Keep the relay's addresses so we can redial it for the mailbox after a disconnect.
+	h.Peerstore().AddAddrs(relay.ID, relay.Addrs, peerstore.PermanentAddrTTL)
+	p := PeerInfo{Host: h, PeerStore: ps, Store: st, Relay: relay, allow: access.NewAllowlist(allowlist...)}
 	p.OnMessage = func(from peer.ID, text string) {
 		fmt.Printf("[%s] %s\n", p.DisplayName(from), text)
 	}
@@ -88,11 +95,11 @@ func (p *PeerInfo) DisplayName(id peer.ID) string {
 	return id.String()
 }
 
-func (p *PeerInfo) record(id peer.ID, incoming bool, text string) {
+func (p *PeerInfo) record(id peer.ID, incoming, queued bool, t time.Time, text string) {
 	if p.Store == nil {
 		return
 	}
-	err := p.Store.AppendMessage(store.Entry{Peer: id, Incoming: incoming, Time: time.Now(), Text: text})
+	err := p.Store.AppendMessage(store.Entry{Peer: id, Incoming: incoming, Queued: queued, Time: t, Text: text})
 	if err != nil {
 		log.Printf("Failed to save message: %v", err)
 	}

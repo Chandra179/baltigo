@@ -1,13 +1,12 @@
 package peer
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"p2p/wire"
 	"sync"
 	"time"
 
@@ -71,8 +70,10 @@ func NewSignedMessage(priv crypto.PrivKey, from, to peer.ID, seq uint64, text st
 
 // Verify checks the signature and that the message is addressed to `self`.
 // The sender is taken from the message and must match `remote`, the peer
-// authenticated by the transport.
-func (m *Message) Verify(self, remote peer.ID, now time.Time) error {
+// authenticated by the transport (or, for mailbox messages, the sender
+// named in the message). The timestamp may be at most maxAge in the past and
+// maxClockSkew in the future.
+func (m *Message) Verify(self, remote peer.ID, now time.Time, maxAge time.Duration) error {
 	if m.Version != messageVersion {
 		return fmt.Errorf("unsupported message version %d", m.Version)
 	}
@@ -84,7 +85,7 @@ func (m *Message) Verify(self, remote peer.ID, now time.Time) error {
 		return errors.New("message is addressed to another peer")
 	}
 	ts := time.UnixMilli(m.Timestamp)
-	if d := now.Sub(ts); d > maxClockSkew || d < -maxClockSkew {
+	if d := now.Sub(ts); d > maxAge || d < -maxClockSkew {
 		return errors.New("message timestamp out of range")
 	}
 	pub, err := from.ExtractPublicKey()
@@ -98,37 +99,15 @@ func (m *Message) Verify(self, remote peer.ID, now time.Time) error {
 	return nil
 }
 
-// writeFrame writes m as a uvarint length prefix followed by JSON.
+// writeFrame writes m as a length-prefixed JSON frame.
 func writeFrame(w io.Writer, m *Message) error {
-	data, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	if len(data) > maxMessageSize {
-		return fmt.Errorf("message too large (%d bytes, max %d)", len(data), maxMessageSize)
-	}
-	var l [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(l[:], uint64(len(data)))
-	_, err = w.Write(append(l[:n], data...))
-	return err
+	return wire.Write(w, m, maxMessageSize)
 }
 
 // readFrame reads one length-prefixed message, refusing frames over maxMessageSize.
 func readFrame(r io.Reader) (*Message, error) {
-	br := bufio.NewReader(r)
-	size, err := binary.ReadUvarint(br)
-	if err != nil {
-		return nil, err
-	}
-	if size == 0 || size > maxMessageSize {
-		return nil, fmt.Errorf("invalid frame size %d", size)
-	}
-	buf := make([]byte, size)
-	if _, err := io.ReadFull(br, buf); err != nil {
-		return nil, err
-	}
 	var m Message
-	if err := json.Unmarshal(buf, &m); err != nil {
+	if err := wire.Read(r, &m, maxMessageSize); err != nil {
 		return nil, err
 	}
 	return &m, nil

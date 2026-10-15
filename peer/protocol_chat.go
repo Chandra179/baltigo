@@ -1,8 +1,13 @@
 package peer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"log"
+	"p2p/cryptoutils"
+	"p2p/mailbox"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -33,7 +38,7 @@ func (p *PeerInfo) ChatHandler() {
 			s.Reset()
 			return
 		}
-		if err := msg.Verify(p.Host.ID(), remote, time.Now()); err != nil {
+		if err := msg.Verify(p.Host.ID(), remote, time.Now(), maxClockSkew); err != nil {
 			fmt.Printf("Rejected msg from %s: %v\n", remote, err)
 			s.Reset()
 			return
@@ -43,7 +48,11 @@ func (p *PeerInfo) ChatHandler() {
 			s.Reset()
 			return
 		}
-		p.record(remote, true, msg.Text)
+		if p.Store != nil {
+			// Remember it so the same message arriving via the mailbox is dropped.
+			p.Store.MarkSeen(remote, msg.Seq)
+		}
+		p.record(remote, true, false, time.Now(), msg.Text)
 		if p.OnMessage != nil {
 			p.OnMessage(remote, msg.Text)
 		}
@@ -65,32 +74,133 @@ func (p *PeerInfo) nextSeq() uint64 {
 	}
 }
 
-// SendSimple sends a signed text message to targetPeerID.
-func (p *PeerInfo) SendSimple(targetPeerID peer.ID, text string) error {
+// SendSimple sends a signed text message to targetPeerID. If the peer cannot
+// be reached it is sealed end-to-end and left in the relay's mailbox instead,
+// and queued is true.
+func (p *PeerInfo) SendSimple(targetPeerID peer.ID, text string) (queued bool, err error) {
 	priv := p.Host.Peerstore().PrivKey(p.Host.ID())
 	if priv == nil {
-		return fmt.Errorf("no private key for local peer")
+		return false, fmt.Errorf("no private key for local peer")
 	}
 	msg, err := NewSignedMessage(priv, p.Host.ID(), targetPeerID, p.nextSeq(), text)
 	if err != nil {
-		return err
+		return false, err
 	}
 
+	liveErr := p.sendLive(targetPeerID, msg)
+	if liveErr == nil {
+		p.record(targetPeerID, false, false, time.Now(), text)
+		return false, nil
+	}
+	if p.Relay.ID == "" {
+		return false, liveErr
+	}
+	if err := p.queue(targetPeerID, msg); err != nil {
+		return false, fmt.Errorf("peer unreachable (%v) and could not queue message: %w", liveErr, err)
+	}
+	p.record(targetPeerID, false, true, time.Now(), text)
+	return true, nil
+}
+
+func (p *PeerInfo) sendLive(target peer.ID, msg *Message) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	stream, err := p.Host.NewStream(
 		network.WithAllowLimitedConn(ctx, "reason"),
-		targetPeerID,
+		target,
 		CHAT_PROTOCOL,
 	)
 	if err != nil {
-		fmt.Printf("Failed to send msg: %v\n", err)
 		return err
 	}
 	defer stream.Close()
-	if err := writeFrame(stream, msg); err != nil {
+	return writeFrame(stream, msg)
+}
+
+// queue seals msg for target and leaves it in the relay mailbox.
+func (p *PeerInfo) queue(target peer.ID, msg *Message) error {
+	pub, err := target.ExtractPublicKey()
+	if err != nil {
+		return fmt.Errorf("cannot get recipient public key: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := writeFrame(&buf, msg); err != nil {
 		return err
 	}
-	p.record(targetPeerID, false, text)
-	return nil
+	blob, err := cryptoutils.Seal(buf.Bytes(), pub)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := p.Host.Connect(ctx, p.Relay); err != nil {
+		return fmt.Errorf("cannot reach relay: %w", err)
+	}
+	return mailbox.Put(ctx, p.Host, p.Relay.ID, target, blob)
+}
+
+// FetchOffline collects messages that were left for us in the relay mailbox
+// and returns how many were delivered.
+func (p *PeerInfo) FetchOffline(ctx context.Context) (int, error) {
+	if p.Relay.ID == "" {
+		return 0, nil
+	}
+	priv := p.Host.Peerstore().PrivKey(p.Host.ID())
+	if priv == nil {
+		return 0, fmt.Errorf("no private key for local peer")
+	}
+	if err := p.Host.Connect(ctx, p.Relay); err != nil {
+		return 0, fmt.Errorf("cannot reach relay: %w", err)
+	}
+	delivered := 0
+	_, err := mailbox.Fetch(ctx, p.Host, p.Relay.ID, func(blob []byte) bool {
+		ack, ok := p.receiveSealed(priv, blob)
+		if ok {
+			delivered++
+		}
+		return ack
+	})
+	return delivered, err
+}
+
+// receiveSealed opens, verifies and delivers one mailbox blob. ack is false
+// only when the blob should be kept on the relay and retried later.
+func (p *PeerInfo) receiveSealed(priv crypto.PrivKey, blob []byte) (ack, delivered bool) {
+	plain, err := cryptoutils.Open(blob, priv)
+	if err != nil {
+		log.Printf("Dropping undecryptable mailbox message: %v", err)
+		return true, false
+	}
+	msg, err := readFrame(bytes.NewReader(plain))
+	if err != nil {
+		log.Printf("Dropping malformed mailbox message: %v", err)
+		return true, false
+	}
+	from, err := peer.Decode(msg.From)
+	if err != nil {
+		return true, false
+	}
+	if err := msg.Verify(p.Host.ID(), from, time.Now(), mailbox.TTL); err != nil {
+		log.Printf("Dropping mailbox message from %s: %v", from, err)
+		return true, false
+	}
+	if !p.allow.Allows(from) {
+		log.Printf("Dropping mailbox message from %s: not on allowlist", from)
+		return true, false
+	}
+	if p.Store != nil {
+		isNew, err := p.Store.MarkSeen(from, msg.Seq)
+		if err != nil {
+			log.Printf("Failed to record mailbox message, will retry: %v", err)
+			return false, false
+		}
+		if !isNew {
+			return true, false // duplicate or replay
+		}
+	}
+	p.record(from, true, false, time.UnixMilli(msg.Timestamp), msg.Text)
+	if p.OnMessage != nil {
+		p.OnMessage(from, msg.Text)
+	}
+	return true, true
 }

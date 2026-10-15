@@ -145,3 +145,27 @@ func TestEncryptedAtRest(t *testing.T) {
 }
 
 func bytesContains(b []byte, s string) bool { return bytes.Contains(b, []byte(s)) }
+
+func TestMarkSeen(t *testing.T) {
+	priv, _ := newKey(t)
+	s := openTemp(t, priv, filepath.Join(t.TempDir(), "db"))
+	_, alice := newKey(t)
+	_, bob := newKey(t)
+
+	for _, tc := range []struct {
+		id   peer.ID
+		seq  uint64
+		want bool
+	}{{alice, 1, true}, {alice, 1, false}, {alice, 2, true}, {bob, 1, true}, {bob, 1, false}} {
+		got, err := s.MarkSeen(tc.id, tc.seq)
+		if err != nil || got != tc.want {
+			t.Errorf("MarkSeen(%s,%d) = %v, %v; want %v", tc.id, tc.seq, got, err, tc.want)
+		}
+	}
+
+	// entries older than the retention period are forgotten
+	s.pruneSeen(time.Now().Add(seenRetention + time.Hour))
+	if got, _ := s.MarkSeen(alice, 1); !got {
+		t.Error("old entry was not pruned")
+	}
+}

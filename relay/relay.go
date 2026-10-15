@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"p2p/access"
 	"p2p/config"
+	"p2p/mailbox"
+	"path/filepath"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -42,6 +44,19 @@ func RunRelay(cfg *config.Config) {
 		fmt.Printf("Failed to start DHT: %v\n", err)
 		return
 	}
+	// Hold sealed messages for peers that are offline.
+	dbPath := cfg.RelayDB
+	if dbPath == "" {
+		dbPath = filepath.Join("relay_db", "mailbox.db")
+	}
+	mb, err := mailbox.NewServer(dbPath, access.NewAllowlist(cfg.RelayAllowlist...))
+	if err != nil {
+		fmt.Printf("Failed to start mailbox: %v\n", err)
+		return
+	}
+	defer mb.Close()
+	mb.Register(r)
+
 	relayinfo := peer.AddrInfo{
 		ID:    r.ID(),
 		Addrs: r.Addrs(),

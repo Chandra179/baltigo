@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -150,7 +151,32 @@ func (cli *CLIManager) handleHistory(args []string) {
 		if e.Incoming {
 			who = cli.peer.DisplayName(id)
 		}
-		fmt.Printf("%s  %s: %s\n", e.Time.Format("2006-01-02 15:04:05"), who, e.Text)
+		note := ""
+		if e.Queued {
+			note = " (sent via relay mailbox)"
+		}
+		fmt.Printf("%s  %s: %s%s\n", e.Time.Format("2006-01-02 15:04:05"), who, e.Text, note)
+	}
+}
+
+func (cli *CLIManager) handleSync() {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	n, err := cli.peer.FetchOffline(ctx)
+	if err != nil {
+		fmt.Printf("Failed to check mailbox: %v\n", err)
+		return
+	}
+	fmt.Printf("Received %d offline message(s)\n", n)
+}
+
+// pollMailbox collects offline messages at startup and then periodically.
+func (cli *CLIManager) pollMailbox() {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cli.peer.FetchOffline(ctx) // errors are expected while the relay is unreachable
+		cancel()
+		time.Sleep(30 * time.Second)
 	}
 }
 
@@ -256,9 +282,13 @@ func (cli *CLIManager) handleSend(args []string) {
 		return
 	}
 
-	if err = cli.peer.SendSimple(decodedPeerID, msg); err != nil {
+	queued, err := cli.peer.SendSimple(decodedPeerID, msg)
+	if err != nil {
 		fmt.Println("error sending message: ", err)
 		return
+	}
+	if queued {
+		fmt.Println("Peer is offline: message sealed and queued on the relay for delivery")
 	}
 }
 
@@ -296,6 +326,7 @@ func (cli *CLIManager) handleHelp() {
 	fmt.Println("  con <name|peer_id>          - Connect to a peer")
 	fmt.Println("  dht                         - Discover peers via DHT")
 	fmt.Println("  send <name|peer_id> <msg>   - Send message to peer")
+	fmt.Println("  sync                        - Check the relay for offline messages")
 	fmt.Println("  contact [list]              - List contacts")
 	fmt.Println("  contact add <name> <peer_id> - Save a contact")
 	fmt.Println("  contact rm <name>           - Remove a contact")
@@ -311,6 +342,7 @@ func (cli *CLIManager) runPeerMode() {
 		log.Fatalf("Failed to initialize peer: %v", err)
 	}
 
+	go cli.pollMailbox()
 	fmt.Println("Peer mode started. Type 'help' for available commands.")
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -344,6 +376,8 @@ func (cli *CLIManager) runPeerMode() {
 			cli.handleDHT()
 		case "send":
 			cli.handleSend(args)
+		case "sync":
+			cli.handleSync()
 		case "contact":
 			cli.handleContact(args)
 		case "history":

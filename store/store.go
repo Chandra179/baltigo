@@ -29,7 +29,11 @@ import (
 var (
 	contactsBucket = []byte("contacts") // peer ID -> sealed name
 	messagesBucket = []byte("messages") // peer ID -> bucket(seq -> sealed entry)
+	seenBucket     = []byte("seen")     // peer ID || message seq -> unix time first seen
 )
+
+// seenRetention is how long delivered message IDs are remembered for de-duplication.
+const seenRetention = 30 * 24 * time.Hour
 
 const (
 	maxNameLen = 32
@@ -57,6 +61,7 @@ type Contact struct {
 type Entry struct {
 	Peer     peer.ID   `json:"-"`
 	Incoming bool      `json:"in"`
+	Queued   bool      `json:"q,omitempty"` // sent to the relay mailbox, not delivered live
 	Time     time.Time `json:"t"`
 	Text     string    `json:"text"`
 }
@@ -85,7 +90,7 @@ func Open(path string, priv crypto.PrivKey) (*Store, error) {
 		return nil, fmt.Errorf("cannot open database (is another instance using it?): %w", err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{contactsBucket, messagesBucket} {
+		for _, b := range [][]byte{contactsBucket, messagesBucket, seenBucket} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -96,7 +101,46 @@ func Open(path string, priv crypto.PrivKey) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, aead: aead}, nil
+	st := &Store{db: db, aead: aead}
+	st.pruneSeen(time.Now())
+	return st, nil
+}
+
+// MarkSeen records that message seq from id was handled. It reports whether
+// the message is new; false means it is a duplicate or a replay.
+func (s *Store) MarkSeen(id peer.ID, seq uint64) (bool, error) {
+	key := make([]byte, 0, len(id)+8)
+	key = append(key, id...)
+	key = binary.BigEndian.AppendUint64(key, seq)
+	isNew := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(seenBucket)
+		if b.Get(key) != nil {
+			return nil
+		}
+		isNew = true
+		return b.Put(key, binary.BigEndian.AppendUint64(nil, uint64(time.Now().Unix())))
+	})
+	return isNew, err
+}
+
+func (s *Store) pruneSeen(now time.Time) {
+	s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(seenBucket)
+		var old [][]byte
+		b.ForEach(func(k, v []byte) error {
+			if len(v) == 8 && now.Sub(time.Unix(int64(binary.BigEndian.Uint64(v)), 0)) > seenRetention {
+				old = append(old, append([]byte(nil), k...))
+			}
+			return nil
+		})
+		for _, k := range old {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) Close() error { return s.db.Close() }

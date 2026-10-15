@@ -35,17 +35,17 @@ func TestMessageVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err := m.Verify(bob, alice, now); err != nil {
+	if err := m.Verify(bob, alice, now, maxClockSkew); err != nil {
 		t.Fatalf("valid message rejected: %v", err)
 	}
 
 	tests := map[string]func() error{
-		"tampered text":         func() error { c := *m; c.Text = "evil"; return c.Verify(bob, alice, now) },
-		"tampered seq":          func() error { c := *m; c.Seq = 2; return c.Verify(bob, alice, now) },
-		"other recipient":       func() error { return m.Verify(eve, alice, now) },
-		"wrong connection peer": func() error { return m.Verify(bob, eve, now) },
-		"stale":                 func() error { return m.Verify(bob, alice, now.Add(time.Hour)) },
-		"bad version":           func() error { c := *m; c.Version = 9; return c.Verify(bob, alice, now) },
+		"tampered text":         func() error { c := *m; c.Text = "evil"; return c.Verify(bob, alice, now, maxClockSkew) },
+		"tampered seq":          func() error { c := *m; c.Seq = 2; return c.Verify(bob, alice, now, maxClockSkew) },
+		"other recipient":       func() error { return m.Verify(eve, alice, now, maxClockSkew) },
+		"wrong connection peer": func() error { return m.Verify(bob, eve, now, maxClockSkew) },
+		"stale":                 func() error { return m.Verify(bob, alice, now.Add(time.Hour), maxClockSkew) },
+		"bad version":           func() error { c := *m; c.Version = 9; return c.Verify(bob, alice, now, maxClockSkew) },
 	}
 	for name, fn := range tests {
 		if fn() == nil {
@@ -112,7 +112,7 @@ func TestSendReceiveBetweenHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"one", "two"} {
-		if err := a.SendSimple(b.Host.ID(), text); err != nil {
+		if _, err := a.SendSimple(b.Host.ID(), text); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -165,7 +165,7 @@ func TestMessagesArePersisted(t *testing.T) {
 	if err := a.Host.Connect(t.Context(), peer.AddrInfo{ID: b.Host.ID(), Addrs: b.Host.Addrs()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.SendSimple(b.Host.ID(), "persist me"); err != nil {
+	if _, err := a.SendSimple(b.Host.ID(), "persist me"); err != nil {
 		t.Fatal(err)
 	}
 	select {
