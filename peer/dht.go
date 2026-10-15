@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"fmt"
+	"p2p/config"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -15,20 +16,18 @@ type DHTManager struct {
 	Discovery *discovery.RoutingDiscovery
 }
 
-// InitDHT initializes Kademlia DHT with bootstrap peers
-func (p *PeerInfo) InitDHT(ctx context.Context, h host.Host) (*DHTManager, error) {
-	kademliaDHT, err := dht.New(h, dht.Mode(dht.ModeAuto))
+// InitDHT initializes a private Kademlia DHT bootstrapped from the given peer (our relay)
+func (p *PeerInfo) InitDHT(ctx context.Context, h host.Host, bootstrap peer.AddrInfo) (*DHTManager, error) {
+	kademliaDHT, err := dht.New(h,
+		dht.Mode(dht.ModeAuto),
+		dht.ProtocolPrefix(config.DHTProtocolPrefix),
+		dht.BootstrapPeers(bootstrap),
+	)
 	if err != nil {
 		return nil, err
 	}
-	dft := dht.DefaultBootstrapPeers
-	for _, addr := range dft {
-		peerinfo, _ := peer.AddrInfoFromP2pAddr(addr)
-		err = h.Connect(ctx, *peerinfo)
-		if err != nil {
-			fmt.Println("Failed to connect to bootstrap peer:", peerinfo.ID, err)
-			continue
-		}
+	if err := h.Connect(ctx, bootstrap); err != nil {
+		return nil, fmt.Errorf("failed to connect to bootstrap peer: %w", err)
 	}
 	if err := kademliaDHT.Bootstrap(ctx); err != nil {
 		return nil, err

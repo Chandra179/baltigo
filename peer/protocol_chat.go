@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -12,16 +13,27 @@ import (
 
 const CHAT_PROTOCOL = "/private-chat/1.0.0"
 
+const (
+	maxMessageSize = 64 << 10 // 64 KiB
+	readTimeout    = 10 * time.Second
+)
+
 func (p *PeerInfo) ChatHandler() {
 	p.Host.SetStreamHandler(CHAT_PROTOCOL, func(s network.Stream) {
 		defer s.Close()
-		var msg string
-		decoder := json.NewDecoder(s)
-		if err := decoder.Decode(&msg); err != nil {
-			fmt.Printf("Failed to receive msg: %v\n", err)
+		if err := s.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+			s.Reset()
 			return
 		}
-		fmt.Println(msg)
+		var msg string
+		decoder := json.NewDecoder(io.LimitReader(s, maxMessageSize))
+		if err := decoder.Decode(&msg); err != nil {
+			fmt.Printf("Failed to receive msg: %v\n", err)
+			s.Reset()
+			return
+		}
+		// The remote peer ID is authenticated by the transport, so it cannot be spoofed.
+		fmt.Printf("[%s] %s\n", s.Conn().RemotePeer(), msg)
 	})
 }
 

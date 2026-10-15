@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"p2p/access"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -21,7 +22,7 @@ type PeerInfo struct {
 	PeerStore  *PeerStore
 }
 
-func InitPeerHost(peerPrivKey crypto.PrivKey) (*PeerInfo, error) {
+func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relayID peer.ID) (*PeerInfo, error) {
 	if peerPrivKey == nil {
 		return nil, fmt.Errorf("private key is required")
 	}
@@ -32,6 +33,7 @@ func InitPeerHost(peerPrivKey crypto.PrivKey) (*PeerInfo, error) {
 	// TODO: configure ip and port for listen address
 	h, err := libp2p.New(
 		libp2p.Identity(peerPrivKey),
+		libp2p.ConnectionGater(access.NewGater(allowlist, relayID)),
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
 		libp2p.EnableRelay(),
