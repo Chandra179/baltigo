@@ -169,3 +169,30 @@ func TestMarkSeen(t *testing.T) {
 		t.Error("old entry was not pruned")
 	}
 }
+
+func TestMarkDelivered(t *testing.T) {
+	priv, _ := newKey(t)
+	s := openTemp(t, priv, filepath.Join(t.TempDir(), "db"))
+	_, alice := newKey(t)
+	s.AppendMessage(Entry{Peer: alice, Seq: 10, Text: "one"})
+	s.AppendMessage(Entry{Peer: alice, Seq: 11, Text: "two"})
+	s.AppendMessage(Entry{Peer: alice, Seq: 10, Incoming: true, Text: "incoming with same seq"})
+
+	if found, err := s.MarkDelivered(alice, 99); err != nil || found {
+		t.Errorf("unknown seq: %v, %v", found, err)
+	}
+	if found, err := s.MarkDelivered(alice, 10); err != nil || !found {
+		t.Fatalf("MarkDelivered: %v, %v", found, err)
+	}
+	if found, _ := s.MarkDelivered(alice, 10); !found {
+		t.Error("second MarkDelivered should still find the entry")
+	}
+
+	h, _ := s.History(alice, 0)
+	if len(h) != 3 || !h[0].Delivered || h[1].Delivered || h[2].Delivered {
+		t.Errorf("history = %+v", h)
+	}
+	if h[0].Text != "one" || h[2].Text != "incoming with same seq" {
+		t.Errorf("order or content changed: %+v", h)
+	}
+}

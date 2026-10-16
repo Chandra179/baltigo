@@ -14,6 +14,9 @@ A decentralized peer-to-peer chat application built with libp2p that supports di
 - **Signed Messages**: Every message is signed with the sender's Ed25519 key and verified (sender, recipient, clock skew, replay) on receipt
 - **Access Control**: Optional peer allowlist and relay allowlist
 - **Offline Messages**: If a peer is unreachable, the message is sealed end-to-end (X25519 key agreement with a NaCl box (XSalsa20-Poly1305), fresh ephemeral key per message) and left in the relay's mailbox for up to 7 days; the relay cannot read it
+- **Delivery Receipts**: Recipients return a signed receipt (live or via the mailbox); `history` shows ✓ delivered
+- **Group Chat**: GossipSub groups; a name plus shared secret defines the group, messages are encrypted with a key derived from the secret, and members find each other through the private DHT
+- **File Transfer**: Direct peer-to-peer transfers with signed offers, SHA-256 verification, size limit and sanitized file names
 - **Contacts & History**: Named contacts and message history, stored in an embedded database with names and text encrypted using a key derived from your identity key
 
 ## Configuration
@@ -34,6 +37,9 @@ PEER_ID=<base64 private key of the peer>
 # Optional
 PEER_ALLOWLIST=12D3KooW...,12D3KooW...   # only these peers may connect to you (empty = anyone)
 RELAY_ALLOWLIST=12D3KooW...,12D3KooW... # only these peers may use the relay (empty = open relay)
+SEND_RECEIPTS=false                     # do not send delivery receipts (default: send)
+PEER_DOWNLOAD_DIR=downloads             # where received files are saved (default downloads)
+PEER_MAX_FILE_MB=100                    # largest file accepted (default 100)
 PEER_DB=peers_db/me.db                  # contacts/history database (default peers_db/<peer id>.db)
 RELAY_DB=relay_db/mailbox.db            # relay mailbox database (default relay_db/mailbox.db)
 ```
@@ -82,6 +88,14 @@ Once running in peer mode, you can use the following commands:
 - `contact add <name> <peer_id>` - Save a contact (names are unique, no spaces)
 - `contact rm <name>` - Remove a contact (history is kept)
 - `history <name|peer_id> [n]` - Show the last n messages (default 20)
+
+### Groups
+- `group join <name> [secret]` - Join (or create) a group. Everyone using the same name **and** secret is in the same group
+- `group say <name> <message>` - Send to a group
+- `group list` / `group peers <name>` / `group history <name> [n]` / `group leave <name>`
+
+### Files
+- `sendfile <name|peer_id> <path>` - Send a file directly to a peer
 
 ### Messaging
 - `send <name|peer_id> <message>` - Send a signed message to a peer. If the peer is offline it is queued on the relay
@@ -166,3 +180,18 @@ Once running in peer mode, you can use the following commands:
 - Each recipient has at most 200 waiting messages of up to 64 KiB, kept for 7 days. Set `RELAY_ALLOWLIST` so only your own peers can use the mailbox.
 - Sealing uses the recipient's long-term key, so someone who later steals that key could read captured mailbox traffic. Live messages are protected by the transport handshake.
 - Only Ed25519 identities (the `genkey` default) can receive offline messages.
+
+## Group chat notes
+
+- The GossipSub topic is a hash of the name and secret, and every message is encrypted with XChaCha20-Poly1305 using a key derived from the secret (argon2id). Without a secret the group is effectively public: anyone who knows the name can read it. Peers that join with the wrong secret end up in a different, empty group.
+- The author of each message is verified by GossipSub's signature check. Messages older than 5 minutes and replayed ciphertexts are dropped.
+- Members find each other through the private DHT, so you must be able to reach the relay. Group traffic needs direct connections between members; it does not go through the relay.
+- GossipSub can drop a message sent in the first moments after a new member appears, while connections are still being set up.
+- Groups are not remembered across restarts: join again after starting. New members do not see earlier messages.
+- Anyone who knows the secret can read the group, including after they leave. Change the secret to start a new group.
+
+## File transfer notes
+
+- Files are sent straight to the recipient and never through the relay (relayed connections are capped at about 128 KiB). If hole punching fails, the transfer fails with a clear error.
+- The recipient only accepts files from peers in their contacts (and on their allowlist, if set), up to `PEER_MAX_FILE_MB`. The offer is signed, the SHA-256 is checked at the end, and a file that does not match is deleted.
+- File names chosen by the sender are reduced to a plain name, so nothing can be written outside the download directory. Existing files are never overwritten (`name (1).ext`). Received files are saved with mode 0600.

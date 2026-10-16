@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"p2p/config"
 	"time"
@@ -85,4 +86,22 @@ func waitForRoutingTable(ctx context.Context, d *dht.IpfsDHT, timeout time.Durat
 		}
 	}
 	return nil
+}
+
+// DHT returns the private DHT, bootstrapping it from the relay on first use.
+func (p *PeerInfo) DHT(ctx context.Context) (*DHTManager, error) {
+	p.dhtMu.Lock()
+	defer p.dhtMu.Unlock()
+	if p.dhtMgr != nil {
+		return p.dhtMgr, nil
+	}
+	if p.Relay.ID == "" {
+		return nil, errors.New("no relay configured")
+	}
+	dm, err := p.InitDHT(ctx, p.Host, p.Relay)
+	if err != nil {
+		return nil, err
+	}
+	p.dhtMgr = dm
+	return dm, nil
 }

@@ -1,10 +1,13 @@
 package peer
 
 import (
+	"context"
 	"fmt"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"log"
 	"p2p/access"
 	"p2p/store"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,13 +33,48 @@ type PeerInfo struct {
 
 	// OnMessage is called for each verified incoming message.
 	OnMessage func(from peer.ID, text string)
+	// OnFile is called after a file from a contact was received and verified.
+	OnFile func(from peer.ID, path string, size int64)
+	// DownloadDir is where received files are stored (default "downloads").
+	DownloadDir string
+	// MaxFileSize is the largest file we accept in bytes (default DefaultMaxFileSize).
+	MaxFileSize int64
+	// OnGroupMessage is called for each verified message from another member of a group we joined.
+	OnGroupMessage func(group string, from peer.ID, text string)
+	// OnReceipt is called when a delivery receipt for one of our messages arrives.
+	OnReceipt func(from peer.ID, seq uint64)
+	// DisableReceipts stops us from acknowledging messages we receive.
+	DisableReceipts bool
 
-	allow  access.Allowlist
-	replay *replayGuard
-	seq    atomic.Uint64
+	allow     access.Allowlist
+	fileSlots chan struct{}
+
+	dhtMu  sync.Mutex
+	dhtMgr *DHTManager
+
+	groupMu  sync.Mutex
+	groups   map[string]*group
+	ps       *pubsub.PubSub
+	psCtx    context.Context
+	psCancel context.CancelFunc
+	replay   *replayGuard
+	seq      atomic.Uint64
 }
 
-func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.AddrInfo, st *store.Store) (*PeerInfo, error) {
+// Options configures optional behaviour of a peer.
+type Options struct {
+	// Allowlist limits who may connect to us and whose offline messages are accepted (empty = anyone).
+	Allowlist []peer.ID
+	// DisableReceipts stops us from acknowledging messages we receive.
+	DisableReceipts bool
+	// DownloadDir is where received files are stored (default "downloads").
+	DownloadDir string
+	// MaxFileSize is the largest file we accept in bytes (default DefaultMaxFileSize).
+	MaxFileSize int64
+}
+
+func InitPeerHost(peerPrivKey crypto.PrivKey, relay peer.AddrInfo, st *store.Store, opts Options) (*PeerInfo, error) {
+	allowlist := opts.Allowlist
 	if peerPrivKey == nil {
 		return nil, fmt.Errorf("private key is required")
 	}
@@ -60,9 +98,15 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, allowlist []peer.ID, relay peer.Ad
 	}
 	// Keep the relay's addresses so we can redial it for the mailbox after a disconnect.
 	h.Peerstore().AddAddrs(relay.ID, relay.Addrs, peerstore.PermanentAddrTTL)
-	p := PeerInfo{Host: h, PeerStore: ps, Store: st, Relay: relay, allow: access.NewAllowlist(allowlist...)}
+	p := PeerInfo{Host: h, PeerStore: ps, Store: st, Relay: relay, allow: access.NewAllowlist(allowlist...), DisableReceipts: opts.DisableReceipts, DownloadDir: opts.DownloadDir, MaxFileSize: opts.MaxFileSize}
 	p.OnMessage = func(from peer.ID, text string) {
 		fmt.Printf("[%s] %s\n", p.DisplayName(from), text)
+	}
+	p.OnFile = func(from peer.ID, path string, size int64) {
+		fmt.Printf("[%s] sent you a file: %s (%d bytes)\n", p.DisplayName(from), path, size)
+	}
+	p.OnGroupMessage = func(group string, from peer.ID, text string) {
+		fmt.Printf("[#%s] %s: %s\n", group, p.DisplayName(from), text)
 	}
 	p.ChatHandler()
 	log.Printf("Peer initialized - ID: %s, Protocols: %v", h.ID(), h.Mux().Protocols())
@@ -95,11 +139,11 @@ func (p *PeerInfo) DisplayName(id peer.ID) string {
 	return id.String()
 }
 
-func (p *PeerInfo) record(id peer.ID, incoming, queued bool, t time.Time, text string) {
+func (p *PeerInfo) record(id peer.ID, incoming, queued bool, t time.Time, seq uint64, text string) {
 	if p.Store == nil {
 		return
 	}
-	err := p.Store.AppendMessage(store.Entry{Peer: id, Incoming: incoming, Queued: queued, Time: t, Text: text})
+	err := p.Store.AppendMessage(store.Entry{Peer: id, Incoming: incoming, Queued: queued, Time: t, Seq: seq, Text: text})
 	if err != nil {
 		log.Printf("Failed to save message: %v", err)
 	}

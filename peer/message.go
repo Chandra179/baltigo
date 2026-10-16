@@ -77,22 +77,28 @@ func (m *Message) Verify(self, remote peer.ID, now time.Time, maxAge time.Durati
 	if m.Version != messageVersion {
 		return fmt.Errorf("unsupported message version %d", m.Version)
 	}
-	from, err := peer.Decode(m.From)
+	return verifySigned(m.From, m.To, self, remote, m.Timestamp, now, maxAge, m.signedBytes(), m.Sig)
+}
+
+// verifySigned holds the checks shared by every signed object: the claimed
+// sender matches remote, it is addressed to self, the timestamp is in range
+// and the signature is valid for the sender's key.
+func verifySigned(fromStr, toStr string, self, remote peer.ID, tsMillis int64, now time.Time, maxAge time.Duration, data, sig []byte) error {
+	from, err := peer.Decode(fromStr)
 	if err != nil || from != remote {
 		return errors.New("sender does not match connection peer")
 	}
-	if m.To != self.String() {
+	if toStr != self.String() {
 		return errors.New("message is addressed to another peer")
 	}
-	ts := time.UnixMilli(m.Timestamp)
-	if d := now.Sub(ts); d > maxAge || d < -maxClockSkew {
+	if d := now.Sub(time.UnixMilli(tsMillis)); d > maxAge || d < -maxClockSkew {
 		return errors.New("message timestamp out of range")
 	}
 	pub, err := from.ExtractPublicKey()
 	if err != nil {
 		return fmt.Errorf("cannot get sender public key: %w", err)
 	}
-	ok, err := pub.Verify(m.signedBytes(), m.Sig)
+	ok, err := pub.Verify(data, sig)
 	if err != nil || !ok {
 		return errors.New("invalid signature")
 	}

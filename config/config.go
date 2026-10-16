@@ -5,6 +5,8 @@ import (
 	"os"
 	"p2p/access"
 	"p2p/cryptoutils"
+	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -21,6 +23,12 @@ type Config struct {
 	PeerPrivKey crypto.PrivKey // Will be used as peer ID
 	// PeerAllowlist limits inbound connections to these peers (empty = allow all).
 	PeerAllowlist []peer.ID
+	// DisableReceipts (SEND_RECEIPTS=false) stops us from sending delivery receipts.
+	DisableReceipts bool
+	// DownloadDir (PEER_DOWNLOAD_DIR) is where received files go (default "downloads").
+	DownloadDir string
+	// MaxFileSize (PEER_MAX_FILE_MB) is the largest file accepted, in bytes (0 = default 100 MiB).
+	MaxFileSize int64
 	// PeerDB is the path of the contacts/history database (default peers_db/<peer id>.db).
 	PeerDB string
 	//
@@ -60,12 +68,24 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("RELAY_ALLOWLIST: %w", err)
 	}
 
+	var maxFileSize int64
+	if v := os.Getenv("PEER_MAX_FILE_MB"); v != "" {
+		mb, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || mb < 1 {
+			return nil, fmt.Errorf("PEER_MAX_FILE_MB must be a positive number, got %q", v)
+		}
+		maxFileSize = mb << 20
+	}
+
 	return &Config{
-		PeerPort:      os.Getenv("PEER_TCP_PORT"),
-		PeerID:        os.Getenv("PEER_ID"),
-		PeerPrivKey:   peerPrivKey,
-		PeerAllowlist: peerAllow,
-		PeerDB:        os.Getenv("PEER_DB"),
+		PeerPort:        os.Getenv("PEER_TCP_PORT"),
+		PeerID:          os.Getenv("PEER_ID"),
+		PeerPrivKey:     peerPrivKey,
+		PeerAllowlist:   peerAllow,
+		DownloadDir:     os.Getenv("PEER_DOWNLOAD_DIR"),
+		MaxFileSize:     maxFileSize,
+		PeerDB:          os.Getenv("PEER_DB"),
+		DisableReceipts: strings.EqualFold(os.Getenv("SEND_RECEIPTS"), "false"),
 		//
 		RelayPort:      os.Getenv("RELAY_TCP_PORT"),
 		RelayID:        relayID,

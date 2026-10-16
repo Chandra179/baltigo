@@ -3,11 +3,13 @@ package peer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"log"
 	"p2p/cryptoutils"
 	"p2p/mailbox"
+	"p2p/wire"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -25,6 +27,8 @@ const (
 // ChatHandler registers the stream handler that receives and verifies messages.
 func (p *PeerInfo) ChatHandler() {
 	p.replay = newReplayGuard()
+	p.receiptHandler()
+	p.fileHandler()
 	p.Host.SetStreamHandler(CHAT_PROTOCOL, func(s network.Stream) {
 		defer s.Close()
 		if err := s.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
@@ -52,7 +56,8 @@ func (p *PeerInfo) ChatHandler() {
 			// Remember it so the same message arriving via the mailbox is dropped.
 			p.Store.MarkSeen(remote, msg.Seq)
 		}
-		p.record(remote, true, false, time.Now(), msg.Text)
+		p.record(remote, true, false, time.Now(), msg.Seq, msg.Text)
+		go p.sendReceipt(remote, msg.Seq)
 		if p.OnMessage != nil {
 			p.OnMessage(remote, msg.Text)
 		}
@@ -89,7 +94,7 @@ func (p *PeerInfo) SendSimple(targetPeerID peer.ID, text string) (queued bool, e
 
 	liveErr := p.sendLive(targetPeerID, msg)
 	if liveErr == nil {
-		p.record(targetPeerID, false, false, time.Now(), text)
+		p.record(targetPeerID, false, false, time.Now(), msg.Seq, text)
 		return false, nil
 	}
 	if p.Relay.ID == "" {
@@ -98,7 +103,7 @@ func (p *PeerInfo) SendSimple(targetPeerID peer.ID, text string) (queued bool, e
 	if err := p.queue(targetPeerID, msg); err != nil {
 		return false, fmt.Errorf("peer unreachable (%v) and could not queue message: %w", liveErr, err)
 	}
-	p.record(targetPeerID, false, true, time.Now(), text)
+	p.record(targetPeerID, false, true, time.Now(), msg.Seq, text)
 	return true, nil
 }
 
@@ -117,14 +122,14 @@ func (p *PeerInfo) sendLive(target peer.ID, msg *Message) error {
 	return writeFrame(stream, msg)
 }
 
-// queue seals msg for target and leaves it in the relay mailbox.
-func (p *PeerInfo) queue(target peer.ID, msg *Message) error {
+// queue seals v (a *Message or *Receipt) for target and leaves it in the relay mailbox.
+func (p *PeerInfo) queue(target peer.ID, v any) error {
 	pub, err := target.ExtractPublicKey()
 	if err != nil {
 		return fmt.Errorf("cannot get recipient public key: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := writeFrame(&buf, msg); err != nil {
+	if err := wire.Write(&buf, v, maxMessageSize); err != nil {
 		return err
 	}
 	blob, err := cryptoutils.Seal(buf.Bytes(), pub)
@@ -171,8 +176,21 @@ func (p *PeerInfo) receiveSealed(priv crypto.PrivKey, blob []byte) (ack, deliver
 		log.Printf("Dropping undecryptable mailbox message: %v", err)
 		return true, false
 	}
-	msg, err := readFrame(bytes.NewReader(plain))
+	raw, err := wire.ReadRaw(bytes.NewReader(plain), maxMessageSize)
 	if err != nil {
+		log.Printf("Dropping malformed mailbox message: %v", err)
+		return true, false
+	}
+	var kind struct {
+		Kind string `json:"kind"`
+	}
+	json.Unmarshal(raw, &kind)
+	if kind.Kind == kindReceipt {
+		p.receiveSealedReceipt(raw)
+		return true, false
+	}
+	var msg Message
+	if err := json.Unmarshal(raw, &msg); err != nil {
 		log.Printf("Dropping malformed mailbox message: %v", err)
 		return true, false
 	}
@@ -198,9 +216,30 @@ func (p *PeerInfo) receiveSealed(priv crypto.PrivKey, blob []byte) (ack, deliver
 			return true, false // duplicate or replay
 		}
 	}
-	p.record(from, true, false, time.UnixMilli(msg.Timestamp), msg.Text)
+	p.record(from, true, false, time.UnixMilli(msg.Timestamp), msg.Seq, msg.Text)
+	go p.sendReceipt(from, msg.Seq)
 	if p.OnMessage != nil {
 		p.OnMessage(from, msg.Text)
 	}
 	return true, true
+}
+
+// receiveSealedReceipt handles a delivery receipt that came through the mailbox.
+func (p *PeerInfo) receiveSealedReceipt(raw []byte) {
+	var r Receipt
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return
+	}
+	from, err := peer.Decode(r.From)
+	if err != nil {
+		return
+	}
+	if err := r.Verify(p.Host.ID(), from, time.Now(), mailbox.TTL); err != nil {
+		log.Printf("Dropping mailbox receipt from %s: %v", from, err)
+		return
+	}
+	if !p.allow.Allows(from) {
+		return
+	}
+	p.handleReceipt(from, r.Seq)
 }

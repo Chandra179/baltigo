@@ -13,6 +13,7 @@ import (
 	"p2p/relay"
 	"p2p/store"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +41,12 @@ func (cli *CLIManager) initPeer() error {
 	if err != nil {
 		return err
 	}
-	p, err := mypeer.InitPeerHost(cli.config.PeerPrivKey, cli.config.PeerAllowlist, relayInfo, st)
+	p, err := mypeer.InitPeerHost(cli.config.PeerPrivKey, relayInfo, st, mypeer.Options{
+		Allowlist:       cli.config.PeerAllowlist,
+		DisableReceipts: cli.config.DisableReceipts,
+		DownloadDir:     cli.config.DownloadDir,
+		MaxFileSize:     cli.config.MaxFileSize,
+	})
 	if err != nil {
 		st.Close()
 		return fmt.Errorf("failed to init peer: %v", err)
@@ -155,8 +161,142 @@ func (cli *CLIManager) handleHistory(args []string) {
 		if e.Queued {
 			note = " (sent via relay mailbox)"
 		}
+		if !e.Incoming && e.Delivered {
+			note += " ✓ delivered"
+		}
 		fmt.Printf("%s  %s: %s%s\n", e.Time.Format("2006-01-02 15:04:05"), who, e.Text, note)
 	}
+}
+
+func (cli *CLIManager) handleGroup(args []string) {
+	usage := func() {
+		fmt.Println("Usage: group join <name> [secret] | leave <name> | list | say <name> <message> | peers <name> | history <name> [n]")
+	}
+	if len(args) == 0 {
+		usage()
+		return
+	}
+	p := cli.peer
+	switch args[0] {
+	case "join":
+		if len(args) < 2 || len(args) > 3 {
+			usage()
+			return
+		}
+		secret := ""
+		if len(args) == 3 {
+			secret = args[2]
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := p.JoinGroup(ctx, args[1], secret); err != nil {
+			fmt.Printf("Failed to join group: %v\n", err)
+			return
+		}
+		fmt.Printf("Joined #%s\n", args[1])
+		if secret == "" {
+			fmt.Println("WARNING: no secret given, anyone who knows the group name can read it")
+		}
+	case "leave":
+		if len(args) != 2 {
+			usage()
+			return
+		}
+		if err := p.LeaveGroup(args[1]); err != nil {
+			fmt.Printf("Failed to leave group: %v\n", err)
+			return
+		}
+		fmt.Printf("Left #%s\n", args[1])
+	case "list":
+		groups := p.Groups()
+		if len(groups) == 0 {
+			fmt.Println("Not in any group. Use: group join <name> [secret]")
+		}
+		names := make([]string, 0, len(groups))
+		for name := range groups {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Printf("  #%-20s %d other member(s) connected\n", name, groups[name])
+		}
+	case "say":
+		if len(args) < 3 {
+			usage()
+			return
+		}
+		n, err := p.SendGroup(args[1], strings.Join(args[2:], " "))
+		if err != nil {
+			fmt.Printf("Failed to send: %v\n", err)
+			return
+		}
+		if n == 0 {
+			fmt.Println("No other members are connected right now, nobody will see this message")
+		}
+	case "peers":
+		if len(args) != 2 {
+			usage()
+			return
+		}
+		peers, err := p.GroupPeers(args[1])
+		if err != nil {
+			fmt.Printf("%v\n", err)
+			return
+		}
+		for _, id := range peers {
+			fmt.Printf("  %s\n", p.DisplayName(id))
+		}
+		fmt.Printf("%d other member(s) connected\n", len(peers))
+	case "history":
+		if len(args) < 2 || len(args) > 3 {
+			usage()
+			return
+		}
+		limit := 20
+		if len(args) == 3 {
+			var err error
+			if limit, err = strconv.Atoi(args[2]); err != nil || limit < 1 {
+				fmt.Println("count must be a positive number")
+				return
+			}
+		}
+		entries, err := p.Store.GroupHistory(args[1], limit)
+		if err != nil {
+			fmt.Printf("Failed to read history: %v\n", err)
+			return
+		}
+		if len(entries) == 0 {
+			fmt.Println("No messages")
+		}
+		for _, e := range entries {
+			who := "me"
+			if e.Incoming {
+				who = p.DisplayName(e.Author)
+			}
+			fmt.Printf("%s  %s: %s\n", e.Time.Format("2006-01-02 15:04:05"), who, e.Text)
+		}
+	default:
+		usage()
+	}
+}
+
+func (cli *CLIManager) handleSendFile(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: sendfile <name|peer_id> <path>")
+		return
+	}
+	id, err := cli.resolvePeer(args[0])
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return
+	}
+	path := strings.Join(args[1:], " ")
+	fmt.Printf("Sending %s to %s ...\n", path, cli.peer.DisplayName(id))
+	if err := cli.peer.SendFile(context.Background(), id, path); err != nil {
+		fmt.Printf("Failed to send file: %v\n", err)
+		return
+	}
+	fmt.Println("File delivered and verified")
 }
 
 func (cli *CLIManager) handleSync() {
@@ -231,12 +371,9 @@ func (cli *CLIManager) handleConnect(args []string) {
 }
 
 func (cli *CLIManager) handleDHT() {
-	relayInfo, err := cli.config.RelayAddrInfo()
-	if err != nil {
-		fmt.Printf("%v\n", err)
-		return
-	}
-	dm, err := cli.peer.InitDHT(context.Background(), cli.peer.Host, relayInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dm, err := cli.peer.DHT(ctx)
 	if err != nil {
 		fmt.Printf("Failed to init DHT: %v\n", err)
 		return
@@ -326,6 +463,10 @@ func (cli *CLIManager) handleHelp() {
 	fmt.Println("  con <name|peer_id>          - Connect to a peer")
 	fmt.Println("  dht                         - Discover peers via DHT")
 	fmt.Println("  send <name|peer_id> <msg>   - Send message to peer")
+	fmt.Println("  sendfile <name|peer_id> <path> - Send a file directly (recipient must have you as a contact)")
+	fmt.Println("  group join <name> [secret]  - Join a group chat (same name + secret = same group)")
+	fmt.Println("  group say <name> <message>  - Send to a group")
+	fmt.Println("  group list|peers|history|leave - Manage groups")
 	fmt.Println("  sync                        - Check the relay for offline messages")
 	fmt.Println("  contact [list]              - List contacts")
 	fmt.Println("  contact add <name> <peer_id> - Save a contact")
@@ -359,6 +500,7 @@ func (cli *CLIManager) runPeerMode() {
 
 		if input == "exit" {
 			fmt.Println("Exiting...")
+			cli.peer.Close()
 			cli.peer.Store.Close()
 			os.Exit(0)
 		}
@@ -376,6 +518,10 @@ func (cli *CLIManager) runPeerMode() {
 			cli.handleDHT()
 		case "send":
 			cli.handleSend(args)
+		case "sendfile":
+			cli.handleSendFile(args)
+		case "group":
+			cli.handleGroup(args)
 		case "sync":
 			cli.handleSync()
 		case "contact":

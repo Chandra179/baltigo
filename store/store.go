@@ -59,11 +59,17 @@ type Contact struct {
 }
 
 type Entry struct {
-	Peer     peer.ID   `json:"-"`
-	Incoming bool      `json:"in"`
-	Queued   bool      `json:"q,omitempty"` // sent to the relay mailbox, not delivered live
-	Time     time.Time `json:"t"`
-	Text     string    `json:"text"`
+	Peer     peer.ID `json:"-"`
+	Incoming bool    `json:"in"`
+	Queued   bool    `json:"q,omitempty"` // sent to the relay mailbox, not delivered live
+	// Seq is the message sequence number (used to match delivery receipts).
+	Seq uint64 `json:"seq,omitempty"`
+	// Author is the sender of a group message (unused for one-to-one chats).
+	Author peer.ID `json:"a,omitempty"`
+	// Delivered is set on outgoing messages once the recipient's signed receipt arrived.
+	Delivered bool      `json:"d,omitempty"`
+	Time      time.Time `json:"t"`
+	Text      string    `json:"text"`
 }
 
 // Open opens (creating if needed) the database at path. priv is the node's
@@ -275,12 +281,29 @@ func (s *Store) NameOf(id peer.ID) string {
 
 // AppendMessage records a sent or received message.
 func (s *Store) AppendMessage(e Entry) error {
+	return s.appendEntry([]byte(e.Peer), e)
+}
+
+// groupKey names a group's conversation in the messages bucket. The group name is
+// hashed so it does not appear in the database file. The "g:" prefix cannot
+// collide with a binary peer ID.
+func groupKey(group string) []byte {
+	h := sha256.Sum256([]byte(group))
+	return append([]byte("g:"), h[:16]...)
+}
+
+// AppendGroupMessage records a message in a group conversation (e.Author is the sender).
+func (s *Store) AppendGroupMessage(group string, e Entry) error {
+	return s.appendEntry(groupKey(group), e)
+}
+
+func (s *Store) appendEntry(key []byte, e Entry) error {
 	data, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.Bucket(messagesBucket).CreateBucketIfNotExists([]byte(e.Peer))
+		b, err := tx.Bucket(messagesBucket).CreateBucketIfNotExists(key)
 		if err != nil {
 			return err
 		}
@@ -288,28 +311,41 @@ func (s *Store) AppendMessage(e Entry) error {
 		if err != nil {
 			return err
 		}
-		var key [8]byte
-		binary.BigEndian.PutUint64(key[:], seq)
-		sealed, err := s.seal(data, []byte(e.Peer))
+		var k [8]byte
+		binary.BigEndian.PutUint64(k[:], seq)
+		sealed, err := s.seal(data, key)
 		if err != nil {
 			return err
 		}
-		return b.Put(key[:], sealed)
+		return b.Put(k[:], sealed)
 	})
 }
 
 // History returns up to limit of the most recent messages with id, oldest first.
 // A limit <= 0 returns everything.
 func (s *Store) History(id peer.ID, limit int) ([]Entry, error) {
+	out, err := s.history([]byte(id), limit)
+	for i := range out {
+		out[i].Peer = id
+	}
+	return out, err
+}
+
+// GroupHistory returns up to limit of the most recent messages in a group, oldest first.
+func (s *Store) GroupHistory(group string, limit int) ([]Entry, error) {
+	return s.history(groupKey(group), limit)
+}
+
+func (s *Store) history(key []byte, limit int) ([]Entry, error) {
 	var out []Entry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(messagesBucket).Bucket([]byte(id))
+		b := tx.Bucket(messagesBucket).Bucket(key)
 		if b == nil {
 			return nil
 		}
 		c := b.Cursor()
 		for k, v := c.Last(); k != nil; k, v = c.Prev() {
-			pt, err := s.open(v, []byte(id))
+			pt, err := s.open(v, key)
 			if err != nil {
 				return err
 			}
@@ -317,7 +353,6 @@ func (s *Store) History(id peer.ID, limit int) ([]Entry, error) {
 			if err := json.NewDecoder(bytes.NewReader(pt)).Decode(&e); err != nil {
 				return err
 			}
-			e.Peer = id
 			out = append(out, e)
 			if limit > 0 && len(out) >= limit {
 				break
@@ -329,4 +364,51 @@ func (s *Store) History(id peer.ID, limit int) ([]Entry, error) {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, err
+}
+
+// receiptScanLimit bounds how many recent entries MarkDelivered inspects.
+const receiptScanLimit = 1000
+
+// MarkDelivered flags the outgoing message with sequence number seq to id as
+// delivered. It reports whether such a message was found.
+func (s *Store) MarkDelivered(id peer.ID, seq uint64) (bool, error) {
+	found := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(messagesBucket).Bucket([]byte(id))
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		scanned := 0
+		for k, v := c.Last(); k != nil && scanned < receiptScanLimit; k, v = c.Prev() {
+			scanned++
+			pt, err := s.open(v, []byte(id))
+			if err != nil {
+				return err
+			}
+			var e Entry
+			if err := json.Unmarshal(pt, &e); err != nil {
+				return err
+			}
+			if e.Incoming || e.Seq != seq {
+				continue
+			}
+			found = true
+			if e.Delivered {
+				return nil
+			}
+			e.Delivered = true
+			data, err := json.Marshal(e)
+			if err != nil {
+				return err
+			}
+			sealed, err := s.seal(data, []byte(id))
+			if err != nil {
+				return err
+			}
+			return b.Put(append([]byte(nil), k...), sealed)
+		}
+		return nil
+	})
+	return found, err
 }

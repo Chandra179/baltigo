@@ -25,22 +25,32 @@ func Write(w io.Writer, v any, max int) error {
 	return err
 }
 
-// Read reads one frame into v. Frames larger than max are refused before the
-// body is read.
-func Read(r io.Reader, v any, max int) error {
+// ReadRaw reads one frame and returns its JSON body without decoding it.
+// Frames larger than max are refused before the body is read.
+func ReadRaw(r io.Reader, max int) ([]byte, error) {
 	br, ok := r.(*bufio.Reader)
 	if !ok {
 		br = bufio.NewReader(r)
 	}
 	size, err := binary.ReadUvarint(br)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if size == 0 || size > uint64(max) {
-		return fmt.Errorf("invalid frame size %d", size)
+		return nil, fmt.Errorf("invalid frame size %d", size)
 	}
 	buf := make([]byte, size)
 	if _, err := io.ReadFull(br, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// Read reads one frame into v. Frames larger than max are refused before the
+// body is read.
+func Read(r io.Reader, v any, max int) error {
+	buf, err := ReadRaw(r, max)
+	if err != nil {
 		return err
 	}
 	return json.Unmarshal(buf, v)

@@ -31,3 +31,5 @@ peers_db
 /peers_db
 relay_db
 /relay_db
+downloads
+/downloads
