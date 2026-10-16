@@ -496,7 +496,7 @@ func (cli *CLIManager) find(args []string) {
 func (cli *CLIManager) handleHelp() {
 	fmt.Println("Available commands:")
 	fmt.Println("  ping <name|peer_id>         - Measure round-trip time to a peer")
-	fmt.Println("  con <name|peer_id>          - Connect to a peer")
+	fmt.Println("  con <name|peer_id>          - Connect to a peer (direct, else via the relay)")
 	fmt.Println("  dht                         - Discover peers via DHT")
 	fmt.Println("  send <name|peer_id> <msg>   - Send message to peer")
 	fmt.Println("  sendfile <name|peer_id> <path> - Send a file directly (recipient must have you as a contact)")
@@ -508,8 +508,9 @@ func (cli *CLIManager) handleHelp() {
 	fmt.Println("  contact add <name> <peer_id> - Save a contact")
 	fmt.Println("  contact rm <name>           - Remove a contact")
 	fmt.Println("  history <name|peer_id> [n]  - Show last n messages (default 20)")
-	fmt.Println("  genkey                      - Generate new Ed25519 key")
-	fmt.Println("  list                        - List discovered peers")
+	fmt.Println("  genkey                      - Generate a new identity key and show its peer ID")
+	fmt.Println("  list                        - List peers we know an address for")
+	fmt.Println("  find <peer_id>              - Show the known addresses of a peer")
 	fmt.Println("  help                        - Show this help")
 	fmt.Println("  exit                        - Exit the program")
 }

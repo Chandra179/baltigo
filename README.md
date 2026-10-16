@@ -1,197 +1,177 @@
-# P2P Chat Application
+# Sabaody
 
-A decentralized peer-to-peer chat application built with libp2p that supports direct connections, relay connections, and DHT-based peer discovery. Docs: https://nothin.gitbook.io/computing/p2p-chat
+Private peer-to-peer chat for the terminal, built on [libp2p](https://libp2p.io/). Peers talk directly when they can and through a small public relay when they cannot. There are no accounts and no central server: your identity is a key pair, and the relay never sees message contents.
 
-![Screenshot](./test.png)
+See [architecture.md](architecture.md) for how it works and what each part can and cannot see.
 
 ## Features
 
-- **Direct P2P Messaging**: Send messages directly between peers using custom protocol
-- **DHT Discovery**: Discover peers using Kademlia DHT with automatic bootstrap
-- **NAT Traversal**: Built-in hole punching and NAT port mapping for firewall bypass
-- **Circuit Relay**: Support for relay nodes to facilitate connections between NAT'd peers
-- **Peer Store**: In-memory peer management with address caching
-- **Signed Messages**: Every message is signed with the sender's Ed25519 key and verified (sender, recipient, clock skew, replay) on receipt
-- **Access Control**: Optional peer allowlist and relay allowlist
-- **Offline Messages**: If a peer is unreachable, the message is sealed end-to-end (X25519 key agreement with a NaCl box (XSalsa20-Poly1305), fresh ephemeral key per message) and left in the relay's mailbox for up to 7 days; the relay cannot read it
-- **Delivery Receipts**: Recipients return a signed receipt (live or via the mailbox); `history` shows ✓ delivered
-- **Group Chat**: GossipSub groups; a name plus shared secret defines the group, messages are encrypted with a key derived from the secret, and members find each other through the private DHT
-- **File Transfer**: Direct peer-to-peer transfers with signed offers, SHA-256 verification, size limit and sanitized file names
-- **Contacts & History**: Named contacts and message history, stored in an embedded database with names and text encrypted using a key derived from your identity key
+- **Direct messaging** between peers, with NAT traversal (hole punching) and a relay fallback
+- **Signed messages**: every message is signed with the sender's Ed25519 key and checked on receipt
+- **Offline messages**: if a peer is unreachable, the message is sealed end to end and left on the relay for up to 7 days
+- **Delivery receipts**: signed acknowledgements; `history` shows ✓ delivered
+- **Group chat**: a group is a name plus a shared secret; messages are encrypted with a key derived from the secret
+- **File transfer**: direct transfers with signed offers and SHA-256 verification
+- **Contacts and history**: stored locally in an encrypted database
+- **Access control**: optional allowlists for peers and for the relay
+
+## Requirements
+
+Go 1.27 or newer (see `go.mod`). One machine with a public IP runs the relay; a small VPS is enough. Open its port for **both TCP and UDP** (UDP carries QUIC).
+
+## Quick start
+
+### 1. Create keys
+
+Every node needs a key pair. This needs no configuration:
+
+```bash
+go run . --genkey
+```
+
+```text
+Private key (keep secret, goes in PEER_ID or RELAY_ID):
+  CAESQ...
+Peer ID (public, safe to share):
+  12D3KooW...
+```
+
+Run it once for the relay and once for each peer.
+
+### 2. Start the relay
+
+On the public machine, create a `.env` file:
+
+```bash
+RELAY_ID=<the relay's private key>
+RELAY_IP=<the relay's public IP>
+RELAY_TCP_PORT=4001
+```
+
+```bash
+go run . --mode relay
+```
+
+It prints the setting every peer needs:
+
+```text
+Relay started. Give peers this setting:
+  RELAY_PEER_ID=12D3KooW...
+```
+
+### 3. Start a peer
+
+On each peer, create a `.env` file. Peers only need the relay's **public** ID, never its private key:
+
+```bash
+PEER_ID=<this peer's private key>
+RELAY_PEER_ID=<printed by the relay>
+RELAY_IP=<the relay's public IP>
+RELAY_TCP_PORT=4001
+```
+
+```bash
+go run . --mode peer
+```
+
+### 4. Chat
+
+Exchange peer IDs out of band (the ID is printed at startup), add each other as contacts, then discover and send:
+
+```text
+> contact add bob 12D3KooW...
+Added contact bob
+> dht
+Successfully advertised. TTL: 3h0m0s
+Total found peers (excluding self): 1
+> ping bob
+Reply from bob: time=762µs
+> send bob hello
+> history bob
+2026-10-16 19:40:44  me: hello ✓ delivered
+```
+
+Incoming messages appear as `[bob] hello`. If Bob is offline, `send` queues the message on the relay and prints a note; Bob receives it when he next starts.
 
 ## Configuration
 
-### Environment Variables
+Settings come from the environment or a `.env` file in the working directory.
 
-Create a `.env` file in the project root with the following configuration:
+| Variable | Used by | Description |
+|---|---|---|
+| `RELAY_IP` | both | Public IP of the relay |
+| `RELAY_TCP_PORT` | both | Relay port, used for TCP and for UDP (QUIC) |
+| `RELAY_ID` | relay | The relay's private key |
+| `RELAY_PEER_ID` | peers | The relay's public peer ID |
+| `PEER_ID` | peers | This peer's private key |
+| `PEER_ALLOWLIST` | peers | Comma-separated peer IDs allowed to connect to you and to send you offline messages (empty = anyone) |
+| `RELAY_ALLOWLIST` | relay | Comma-separated peer IDs allowed to use the relay and mailbox (empty = open relay) |
+| `SEND_RECEIPTS` | peers | `false` to stop sending delivery receipts (default: send) |
+| `PEER_DOWNLOAD_DIR` | peers | Where received files are saved (default `downloads`) |
+| `PEER_MAX_FILE_MB` | peers | Largest file accepted, in MiB (default 100) |
+| `PEER_DB` | peers | Contacts and history database (default `peers_db/<peer id>.db`) |
+| `RELAY_DB` | relay | Mailbox database (default `relay_db/mailbox.db`) |
 
-```bash
-# Relay server configuration
-RELAY_IP=99.0.0.5
-RELAY_TCP_PORT=2222   # the relay listens on this port for both TCP and UDP (QUIC)
-RELAY_ID=<base64 private key of the relay>
+Peers listen on random ports. Older setups that put the relay's private key in a peer's `RELAY_ID` still work but print a warning; switch to `RELAY_PEER_ID`.
 
-# Peer identity (base64 private key, see `genkey`)
-PEER_ID=<base64 private key of the peer>
+## Commands
 
-# Optional
-PEER_ALLOWLIST=12D3KooW...,12D3KooW...   # only these peers may connect to you (empty = anyone)
-RELAY_ALLOWLIST=12D3KooW...,12D3KooW... # only these peers may use the relay (empty = open relay)
-SEND_RECEIPTS=false                     # do not send delivery receipts (default: send)
-PEER_DOWNLOAD_DIR=downloads             # where received files are saved (default downloads)
-PEER_MAX_FILE_MB=100                    # largest file accepted (default 100)
-PEER_DB=peers_db/me.db                  # contacts/history database (default peers_db/<peer id>.db)
-RELAY_DB=relay_db/mailbox.db            # relay mailbox database (default relay_db/mailbox.db)
-```
+Type `help` in peer mode to list them.
 
-### Configuration Parameters
+| Command | What it does |
+|---|---|
+| `contact [list]`, `contact add <name> <peer_id>`, `contact rm <name>` | Manage contacts (names are unique, no spaces; history is kept when you remove one) |
+| `send <name\|peer_id> <message>` | Send a signed message; queued on the relay if the peer is offline |
+| `history <name\|peer_id> [n]` | Show the last n messages (default 20) |
+| `sync` | Collect messages left for you on the relay (also done at startup and every 30 seconds) |
+| `sendfile <name\|peer_id> <path>` | Send a file directly to a contact |
+| `group join <name> [secret]`, `group say <name> <message>`, `group list`, `group peers <name>`, `group history <name> [n]`, `group leave <name>` | Group chat |
+| `dht` | Advertise yourself and discover peers |
+| `con <name\|peer_id>` | Connect to a peer (direct, else via the relay) |
+| `ping <name\|peer_id>` | Measure round-trip time |
+| `list`, `find <peer_id>` | Show known peers and a peer's addresses |
+| `genkey` | Generate a new identity key |
+| `exit` | Quit (Ctrl-D and Ctrl-C also exit cleanly) |
 
-- **RELAY_IP**: IP address of the relay server (publicly accessible)
-- **RELAY_TCP_PORT**: TCP port for relay server
-- **RELAY_ID**: Peer ID of the relay server (generated from relay's private key)
+## Things to know
 
-## Usage
-
-### Running as a Relay Server
-
-```bash
-./p2p-chat --mode relay
-```
-
-### Running as a Peer
-
-```bash
-./p2p-chat --mode peer
-```
-
-## CLI Commands
-
-Once running in peer mode, you can use the following commands:
-
-### Key Management
-- `genkey` - Generate a new Ed25519 private key (use this to derive peer IDs)
-- `help` - Show all available commands
-
-> **Note**: The `genkey` command generates the private key that determines your peer ID. Save this key securely as it represents your peer's identity on the network.
-
-### Peer Discovery
-- `dht` - Discover peers via DHT and advertise yourself
-- `list` - List all discovered peers
-- `find <peer_id>` - Find addresses for a specific peer
-
-### Connection Management
-- `ping <peer_id> <peer_addr>` - Test connectivity to a peer
-- `con <name|peer_id>` - Connect to a peer (tries direct, falls back to relay)
-
-### Contacts and history
-- `contact [list]` - List saved contacts
-- `contact add <name> <peer_id>` - Save a contact (names are unique, no spaces)
-- `contact rm <name>` - Remove a contact (history is kept)
-- `history <name|peer_id> [n]` - Show the last n messages (default 20)
-
-### Groups
-- `group join <name> [secret]` - Join (or create) a group. Everyone using the same name **and** secret is in the same group
-- `group say <name> <message>` - Send to a group
-- `group list` / `group peers <name>` / `group history <name> [n]` / `group leave <name>`
-
-### Files
-- `sendfile <name|peer_id> <path>` - Send a file directly to a peer
-
-### Messaging
-- `send <name|peer_id> <message>` - Send a signed message to a peer. If the peer is offline it is queued on the relay
-- `sync` - Check the relay for messages received while you were offline (also done at startup and every 30 seconds)
-
-## Example Workflow
-
-### Initial Setup
-
-1. **Generate keys for relay server**:
-   ```bash
-   ./p2p-chat --mode peer
-   > genkey
-   Generated key: CAESIBx7hGtQvnKCqGnNlLzKHgVXQZXPQ3vBJ6VGpJLGnNlZ
-   ```
-   Save this key `RELAY_ID` for your relay server configuration.
-
-2. **Generate keys for peer**:
-   ```bash
-   ./p2p-chat --mode peer
-   > genkey  
-   Generated key: CAESIDy8iHuRwoMDrHoOmMmLKhgWYRZYQ4wCK7WHqKMHoOmM
-   ```
-   Save this key `PEER_ID` for your peer configuration.
-
-3. **Set up relay server**:
-   ```bash
-   # Configure relay with generated key
-   ./p2p-chat --mode relay
-   ```
-
-### Peer Communication
-
-1. **Start a peer**:
-   ```bash
-   ./p2p-chat --mode peer
-   Peer initialized - ID: 12D3KooWExamplePeerID, Protocols: [/private-chat/2.0.0]
-   Successfully connected to relay: 12D3KooWExampleRelayID
-   ```
-
-2. **Discover peers via DHT**:
-   ```
-   > dht
-   Successfully advertised. TTL: 24h0m0s
-   Total found peers (excluding self): 3
-   ```
-
-3. **List discovered peers**:
-   ```
-   > list
-   [12D3KooW... 12D3KooX... 12D3KooY...]
-   ```
-
-4. **Connect to a peer**:
-   ```
-   > con 12D3KooWExampleTargetPeer
-   success direct connection
-   Remote supports: [/private-chat/2.0.0 /libp2p/circuit/relay/0.2.0/hop]
-   Successfully connected to peer: 12D3KooWExampleTargetPeer
-   ```
-
-5. **Send a message**:
-   ```
-   > send 12D3KooWExampleTargetPeer Hello, this is a test message!
-   ```
-
-6. **Receive messages**:
-   ```
-   Hello, this is a test message!
-   ```
-
-## Resources
-
-- [libp2p Documentation](https://docs.libp2p.io/)
-- [Kademlia DHT Specification](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf)
-- [Circuit Relay Specification](https://github.com/libp2p/specs/tree/master/relay)
-
-## Offline delivery and its limits
-
-- Messages to an unreachable peer are signed by you, sealed to the recipient's public key and stored on the relay. The recipient verifies the signature, checks the message is addressed to them and drops duplicates and replays.
+**Offline messages**
 - The relay can see who leaves a message for whom and when, but not the contents.
-- Each recipient has at most 200 waiting messages of up to 64 KiB, kept for 7 days. Set `RELAY_ALLOWLIST` so only your own peers can use the mailbox.
-- Sealing uses the recipient's long-term key, so someone who later steals that key could read captured mailbox traffic. Live messages are protected by the transport handshake.
-- Only Ed25519 identities (the `genkey` default) can receive offline messages.
+- Each recipient has at most 200 waiting messages of up to 64 KiB, kept for 7 days.
+- Set `RELAY_ALLOWLIST` so only your own peers can use the relay and mailbox.
+- Only Ed25519 identities (what `--genkey` creates) can receive offline messages.
+- Sealing uses the recipient's long-term key: someone who later steals that key could read mailbox traffic they captured earlier.
 
-## Group chat notes
-
-- The GossipSub topic is a hash of the name and secret, and every message is encrypted with XChaCha20-Poly1305 using a key derived from the secret (argon2id). Without a secret the group is effectively public: anyone who knows the name can read it. Peers that join with the wrong secret end up in a different, empty group.
-- The author of each message is verified by GossipSub's signature check. Messages older than 5 minutes and replayed ciphertexts are dropped.
-- Members find each other through the private DHT, so you must be able to reach the relay. Group traffic needs direct connections between members; it does not go through the relay.
-- GossipSub can drop a message sent in the first moments after a new member appears, while connections are still being set up.
+**Group chat**
+- Everyone who uses the same name **and** secret is in the same group. With no secret, anyone who knows the name can read it.
+- Members find each other through the private DHT, so the relay must be reachable. Group traffic goes directly between members, not through the relay.
+- A message sent in the first moments after a new member appears can be dropped while connections are still being set up.
 - Groups are not remembered across restarts: join again after starting. New members do not see earlier messages.
 - Anyone who knows the secret can read the group, including after they leave. Change the secret to start a new group.
 
-## File transfer notes
+**File transfer**
+- Files are never sent through the relay (relayed connections are capped at about 128 KiB). If hole punching fails, the transfer fails with a clear error.
+- The recipient only accepts files from their contacts (and their allowlist, if set), up to `PEER_MAX_FILE_MB`.
+- File names chosen by the sender are reduced to a plain name; existing files are never overwritten (`name (1).ext`). Received files are saved with mode 0600.
 
-- Files are sent straight to the recipient and never through the relay (relayed connections are capped at about 128 KiB). If hole punching fails, the transfer fails with a clear error.
-- The recipient only accepts files from peers in their contacts (and on their allowlist, if set), up to `PEER_MAX_FILE_MB`. The offer is signed, the SHA-256 is checked at the end, and a file that does not match is deleted.
-- File names chosen by the sender are reduced to a plain name, so nothing can be written outside the download directory. Existing files are never overwritten (`name (1).ext`). Received files are saved with mode 0600.
+**Local data**
+- Contact names and message text are encrypted in the database with a key derived from your identity key. This protects the file on its own, not against someone who also has your `.env`. If you change `PEER_ID`, the old data cannot be read.
+- Only one process can open a database at a time.
+
+## Development
+
+```bash
+make build   # bin/sabaody
+make test    # go test -race ./...
+make vet
+make lint    # needs golangci-lint
+make peer    # go run . --mode=peer
+make relay   # go run . --mode=relay
+```
+
+The module path is `github.com/Chandra179/sabaody`. Tests start real libp2p nodes on localhost and need no network access.
+
+## Resources
+
+- [libp2p](https://libp2p.io/) and its [specifications](https://github.com/libp2p/specs)
+- [Circuit relay v2 specification](https://github.com/libp2p/specs/blob/master/relay/circuit-v2.md)
