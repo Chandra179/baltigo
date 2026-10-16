@@ -1,15 +1,24 @@
-.PHONY: push peer relay
+.PHONY: build test vet lint peer relay genkey
 
-push:
-	git add .
-	git commit -m "add"
-	git push
+BIN := bin/sabaody
 
-rebase:
-	git pull --rebase
+build:
+	go build -o $(BIN) .
+
+test:
+	go test -race ./...
+
+vet:
+	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 peer:
-	go run main.go --mode=peer
+	go run . --mode=peer
 
 relay:
-	go run main.go --mode=relay
+	go run . --mode=relay
+
+genkey:
+	go run . --genkey
