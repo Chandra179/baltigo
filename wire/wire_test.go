@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bufio"
 	"bytes"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestRoundTripMultipleFrames(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r := NewReader(&buf)
+	r := bufio.NewReader(&buf)
 	for i := 0; i < 3; i++ {
 		var m msg
 		if err := Read(r, &m, 1024); err != nil || m.N != i {

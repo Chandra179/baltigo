@@ -68,12 +68,12 @@ func join(t *testing.T, p *PeerInfo, name, secret string) {
 	}
 }
 
-// waitMembers waits until p sees n other members in the group. GossipSub drops
+// waitMembers waits until p sees another member in the group. GossipSub drops
 // messages sent to a peer whose outbound stream is still being negotiated, even
 // after its subscription is known, so give the streams a moment to settle.
-func waitMembers(t *testing.T, p *PeerInfo, name string, n int) {
+func waitMembers(t *testing.T, p *PeerInfo, name string) {
 	t.Helper()
-	waitFor(t, "group members", func() bool { return p.Groups()[name] >= n })
+	waitFor(t, "group members", func() bool { return p.Groups()[name] >= 1 })
 	time.Sleep(500 * time.Millisecond)
 }
 
@@ -86,8 +86,8 @@ func TestGroupChat(t *testing.T) {
 	join(t, a, "team", "s3cret")
 	join(t, b, "team", "s3cret")
 	join(t, c, "team", "different-secret") // same name, wrong secret: lands on another topic
-	waitMembers(t, a, "team", 1)
-	waitMembers(t, b, "team", 1)
+	waitMembers(t, a, "team")
+	waitMembers(t, b, "team")
 
 	n, err := a.SendGroup("team", "hello team")
 	if err != nil || n != 1 {
@@ -137,7 +137,7 @@ func TestGroupRejectsBadMessages(t *testing.T) {
 	linkPeers(t, a, b)
 	join(t, a, "team", "pw")
 	join(t, b, "team", "pw")
-	waitMembers(t, a, "team", 1)
+	waitMembers(t, a, "team")
 
 	ga := a.groups["team"]
 	publish := func(data []byte) {
@@ -189,7 +189,7 @@ func TestGroupLeaveAndErrors(t *testing.T) {
 	}
 
 	join(t, b, "g", "x")
-	waitMembers(t, a, "g", 1)
+	waitMembers(t, a, "g")
 	if err := b.LeaveGroup("g"); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestGroupAllowlist(t *testing.T) {
 	linkPeers(t, a, b)
 	join(t, a, "g", "x")
 	join(t, b, "g", "x")
-	waitMembers(t, a, "g", 1)
+	waitMembers(t, a, "g")
 
 	// b only accepts group messages from a peer on its allowlist; a is not on it
 	_, other := newIdentity(t)

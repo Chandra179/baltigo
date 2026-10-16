@@ -17,7 +17,7 @@ import (
 
 // offlineSetup returns a relay running a mailbox plus two peers that know the
 // relay but not each other.
-func offlineSetup(t *testing.T) (relayInfo peer.AddrInfo, alice, bob *PeerInfo, sa, sb *store.Store) {
+func offlineSetup(t *testing.T) (alice, bob *PeerInfo, sa, sb *store.Store) {
 	t.Helper()
 	r, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
@@ -30,7 +30,7 @@ func offlineSetup(t *testing.T) (relayInfo peer.AddrInfo, alice, bob *PeerInfo, 
 	}
 	t.Cleanup(func() { srv.Close() })
 	srv.Register(r)
-	relayInfo = peer.AddrInfo{ID: r.ID(), Addrs: r.Addrs()}
+	relayInfo := peer.AddrInfo{ID: r.ID(), Addrs: r.Addrs()}
 
 	setup := func() (*PeerInfo, *store.Store) {
 		p := newTestPeer(t)
@@ -49,7 +49,7 @@ func offlineSetup(t *testing.T) (relayInfo peer.AddrInfo, alice, bob *PeerInfo, 
 }
 
 func TestOfflineDelivery(t *testing.T) {
-	_, alice, bob, sa, sb := offlineSetup(t)
+	alice, bob, sa, sb := offlineSetup(t)
 
 	// Bob is not reachable by Alice, so the message is queued on the relay.
 	before := time.Now().Add(-time.Second)
@@ -84,7 +84,7 @@ func TestOfflineDelivery(t *testing.T) {
 }
 
 func TestOfflineReplayAndForgeryRejected(t *testing.T) {
-	_, alice, bob, _, _ := offlineSetup(t)
+	alice, bob, _, _ := offlineSetup(t)
 	var delivered atomic.Int32
 	bob.OnMessage = func(peer.ID, string) { delivered.Add(1) }
 
@@ -144,7 +144,7 @@ func TestOfflineReplayAndForgeryRejected(t *testing.T) {
 }
 
 func TestLiveMessageThenMailboxDuplicateDropped(t *testing.T) {
-	_, alice, bob, _, _ := offlineSetup(t)
+	alice, bob, _, _ := offlineSetup(t)
 	var delivered atomic.Int32
 	bob.OnMessage = func(peer.ID, string) { delivered.Add(1) }
 	if err := alice.Host.Connect(t.Context(), peer.AddrInfo{ID: bob.Host.ID(), Addrs: bob.Host.Addrs()}); err != nil {

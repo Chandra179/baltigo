@@ -18,8 +18,6 @@ import (
 const DHTProtocolPrefix = "/p2pchat"
 
 type Config struct {
-	PeerPort    string
-	PeerID      string
 	PeerPrivKey crypto.PrivKey // Will be used as peer ID
 	// PeerAllowlist limits inbound connections to these peers (empty = allow all).
 	PeerAllowlist []peer.ID
@@ -78,8 +76,6 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		PeerPort:        os.Getenv("PEER_TCP_PORT"),
-		PeerID:          os.Getenv("PEER_ID"),
 		PeerPrivKey:     peerPrivKey,
 		PeerAllowlist:   peerAllow,
 		DownloadDir:     os.Getenv("PEER_DOWNLOAD_DIR"),

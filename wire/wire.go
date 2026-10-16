@@ -55,7 +55,3 @@ func Read(r io.Reader, v any, max int) error {
 	}
 	return json.Unmarshal(buf, v)
 }
-
-// NewReader wraps r so that several frames can be read from one stream
-// without losing buffered bytes between calls.
-func NewReader(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }

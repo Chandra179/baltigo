@@ -5,6 +5,7 @@
 package mailbox
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -122,7 +123,7 @@ func (s *Server) handle(st network.Stream) {
 		return
 	}
 	remote := st.Conn().RemotePeer()
-	r := wire.NewReader(st)
+	r := bufio.NewReader(st)
 	for {
 		var req Request
 		if err := wire.Read(r, &req, maxRequest); err != nil {

@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 )
 
 type CLIManager struct {
@@ -321,21 +323,28 @@ func (cli *CLIManager) pollMailbox() {
 }
 
 func (cli *CLIManager) handlePing(args []string) {
-	if len(args) < 2 {
-		fmt.Println("Usage: ping <peer_id> <peer_addr>")
+	pings := 0
+	if len(args) != 1 {
+		fmt.Println("Usage: ping <name|peer_id>")
 		return
 	}
-
-	idStr := args[0]
-	addr := args[1]
-
-	pID, err := peer.Decode(idStr)
+	id, err := cli.resolvePeer(args[0])
 	if err != nil {
-		fmt.Printf("Invalid peer ID: %v\n", err)
+		fmt.Printf("%v\n", err)
 		return
 	}
-
-	cli.peer.Ping(pID, addr)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for res := range ping.Ping(ctx, cli.peer.Host, id) {
+		if res.Error != nil {
+			fmt.Printf("Ping failed: %v\n", res.Error)
+			return
+		}
+		fmt.Printf("Reply from %s: time=%v\n", cli.peer.DisplayName(id), res.RTT)
+		if pings++; pings == 3 {
+			return
+		}
+	}
 }
 
 func (cli *CLIManager) handleConnect(args []string) {
@@ -351,8 +360,8 @@ func (cli *CLIManager) handleConnect(args []string) {
 		return
 	}
 
-	addrs := cli.peer.PeerStore.GetPeer(pID)
-	if len(addrs) <= 0 {
+	addrs := cli.peer.Host.Peerstore().Addrs(pID)
+	if len(addrs) == 0 {
 		fmt.Println("No address for given peer")
 	}
 
@@ -379,25 +388,25 @@ func (cli *CLIManager) handleDHT() {
 		return
 	}
 
-	err = dm.AdvertiseHost(context.Background(), mypeer.CHAT_PROTOCOL)
+	err = dm.AdvertiseHost(ctx, mypeer.CHAT_PROTOCOL)
 	if err != nil {
 		fmt.Printf("Failed to advertise host: %v\n", err)
 		return
 	}
 
-	peers, err := dm.FindPeers(context.Background(), mypeer.CHAT_PROTOCOL)
+	peers, err := dm.Discovery.FindPeers(ctx, mypeer.CHAT_PROTOCOL)
 	if err != nil {
 		fmt.Printf("Failed to find peers: %v\n", err)
 		return
 	}
 
-	// Store found peers in memory, excluding self
+	// Remember the addresses of the peers found, excluding self
 	peerCount := 0
 	for peer := range peers {
 		if peer.ID == cli.peer.Host.ID() {
 			continue // skip self
 		}
-		cli.peer.PeerStore.AddPeer(peer.ID, peer.Addrs)
+		cli.peer.Host.Peerstore().AddAddrs(peer.ID, peer.Addrs, peerstore.TempAddrTTL)
 		peerCount++
 	}
 
@@ -438,8 +447,20 @@ func (cli *CLIManager) handleGenkey() {
 	fmt.Println("Generated key:", key)
 }
 
+// handleList prints the peers we know an address for, other than ourselves and the relay.
 func (cli *CLIManager) handleList() {
-	fmt.Println(cli.peer.PeerStore.GetAllPeers())
+	ps := cli.peer.Host.Peerstore()
+	n := 0
+	for _, id := range ps.PeersWithAddrs() {
+		if id == cli.peer.Host.ID() || id == cli.peer.Relay.ID {
+			continue
+		}
+		fmt.Printf("  %s\n", cli.peer.DisplayName(id))
+		n++
+	}
+	if n == 0 {
+		fmt.Println("No peers known yet. Use: dht")
+	}
 }
 
 func (cli *CLIManager) find(args []string) {
@@ -454,12 +475,12 @@ func (cli *CLIManager) find(args []string) {
 		fmt.Printf("Invalid peer ID: %v\n", err)
 		return
 	}
-	fmt.Println(cli.peer.PeerStore.GetPeer(i))
+	fmt.Println(cli.peer.Host.Peerstore().Addrs(i))
 }
 
 func (cli *CLIManager) handleHelp() {
 	fmt.Println("Available commands:")
-	fmt.Println("  ping <peer_id> <peer_addr>  - Ping a peer")
+	fmt.Println("  ping <name|peer_id>         - Measure round-trip time to a peer")
 	fmt.Println("  con <name|peer_id>          - Connect to a peer")
 	fmt.Println("  dht                         - Discover peers via DHT")
 	fmt.Println("  send <name|peer_id> <msg>   - Send message to peer")

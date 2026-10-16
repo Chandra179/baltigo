@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -197,7 +198,7 @@ func refuse(s network.Stream, reason string) error {
 
 func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
 	s.SetReadDeadline(time.Now().Add(readTimeout))
-	r := wire.NewReader(s)
+	r := bufio.NewReader(s)
 	var offer FileOffer
 	if err := wire.Read(r, &offer, maxFrameSize); err != nil {
 		return fmt.Errorf("bad offer: %w", err)
@@ -374,7 +375,7 @@ func (p *PeerInfo) transferFile(ctx context.Context, target peer.ID, offer *File
 	if err := wire.Write(s, offer, maxFrameSize); err != nil {
 		return err
 	}
-	r := wire.NewReader(s)
+	r := bufio.NewReader(s)
 	readReply := func(timeout time.Duration) error {
 		s.SetReadDeadline(time.Now().Add(timeout))
 		var reply fileReply

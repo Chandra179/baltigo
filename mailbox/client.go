@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -23,7 +24,7 @@ func call(ctx context.Context, h host.Host, relay peer.ID, fn func(do func(Reque
 	} else {
 		st.SetDeadline(time.Now().Add(sessionTimeout))
 	}
-	r := wire.NewReader(st)
+	r := bufio.NewReader(st)
 	do := func(req Request) (Response, error) {
 		var resp Response
 		if err := wire.Write(st, req, maxRequest); err != nil {

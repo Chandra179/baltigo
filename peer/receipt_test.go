@@ -75,7 +75,7 @@ func TestReceiptVerify(t *testing.T) {
 }
 
 func TestLiveReceipt(t *testing.T) {
-	_, alice, bob, sa, _ := offlineSetup(t)
+	alice, bob, sa, _ := offlineSetup(t)
 	var gotReceipt atomic.Uint64
 	alice.OnReceipt = func(from peer.ID, seq uint64) {
 		if from != bob.Host.ID() {
@@ -97,7 +97,7 @@ func TestLiveReceipt(t *testing.T) {
 }
 
 func TestReceiptsCanBeDisabled(t *testing.T) {
-	_, alice, bob, sa, _ := offlineSetup(t)
+	alice, bob, sa, _ := offlineSetup(t)
 	bob.DisableReceipts = true
 	if err := alice.Host.Connect(t.Context(), peer.AddrInfo{ID: bob.Host.ID(), Addrs: bob.Host.Addrs()}); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestReceiptsCanBeDisabled(t *testing.T) {
 
 // Both peers are unreachable to each other: the message and its receipt both travel via the mailbox.
 func TestOfflineReceiptViaMailbox(t *testing.T) {
-	_, alice, bob, sa, _ := offlineSetup(t)
+	alice, bob, sa, _ := offlineSetup(t)
 	queued, err := alice.SendSimple(bob.Host.ID(), "see you later")
 	if err != nil || !queued {
 		t.Fatalf("SendSimple: queued=%v err=%v", queued, err)
@@ -138,7 +138,7 @@ func TestOfflineReceiptViaMailbox(t *testing.T) {
 }
 
 func TestForgedReceiptRejected(t *testing.T) {
-	_, alice, bob, sa, _ := offlineSetup(t)
+	alice, bob, sa, _ := offlineSetup(t)
 	if err := alice.Host.Connect(t.Context(), peer.AddrInfo{ID: bob.Host.ID(), Addrs: bob.Host.Addrs()}); err != nil {
 		t.Fatal(err)
 	}

@@ -39,7 +39,7 @@ func (p *PeerInfo) InitDHT(ctx context.Context, h host.Host, bootstrap peer.Addr
 	if err := kademliaDHT.Bootstrap(ctx); err != nil {
 		return nil, err
 	}
-	// Wait for the routing table to be populated so Advertise/FindPeers have peers to query.
+	// Wait for the routing table to be populated so Advertise and FindPeers have peers to query.
 	select {
 	case err := <-kademliaDHT.RefreshRoutingTable():
 		if err != nil {
@@ -62,15 +62,6 @@ func (d *DHTManager) AdvertiseHost(ctx context.Context, rendezvous string) error
 	}
 	fmt.Println("Successfully advertised. TTL:", ttl)
 	return nil
-}
-
-// FindPeers discovers peers by rendezvous string
-func (d *DHTManager) FindPeers(ctx context.Context, rendezvous string) (<-chan peer.AddrInfo, error) {
-	peerChan, err := d.Discovery.FindPeers(ctx, rendezvous)
-	if err != nil {
-		return nil, err
-	}
-	return peerChan, nil
 }
 
 func waitForRoutingTable(ctx context.Context, d *dht.IpfsDHT, timeout time.Duration) error {

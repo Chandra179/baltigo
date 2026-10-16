@@ -17,15 +17,14 @@ import (
 // sender can decrypt it later. The recipient is addressed by its libp2p
 // Ed25519 identity, converted to X25519.
 const (
-	keySize      = 32
-	nonceSize    = 24
-	sealOverhead = keySize + nonceSize + box.Overhead
+	keySize   = 32
+	nonceSize = 24
+
+	// SealOverhead is the number of bytes Seal adds to a plaintext.
+	SealOverhead = keySize + nonceSize + box.Overhead
 )
 
 var ErrOpen = errors.New("cannot open sealed message")
-
-// SealOverhead is the number of bytes Seal adds to a plaintext.
-const SealOverhead = sealOverhead
 
 // ed25519PubToX25519 converts a libp2p Ed25519 public key to an X25519 public key.
 func ed25519PubToX25519(pub crypto.PubKey) (*[keySize]byte, error) {
@@ -77,7 +76,7 @@ func Seal(plaintext []byte, recipient crypto.PubKey) ([]byte, error) {
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
-	out := make([]byte, 0, sealOverhead+len(plaintext))
+	out := make([]byte, 0, SealOverhead+len(plaintext))
 	out = append(out, epub[:]...)
 	out = append(out, nonce[:]...)
 	return box.Seal(out, plaintext, &nonce, rpub, epriv), nil
@@ -85,7 +84,7 @@ func Seal(plaintext []byte, recipient crypto.PubKey) ([]byte, error) {
 
 // Open decrypts a message produced by Seal for the owner of priv.
 func Open(sealed []byte, priv crypto.PrivKey) ([]byte, error) {
-	if len(sealed) < sealOverhead {
+	if len(sealed) < SealOverhead {
 		return nil, ErrOpen
 	}
 	xpriv, err := ed25519PrivToX25519(priv)
