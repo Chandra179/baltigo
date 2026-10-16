@@ -1,12 +1,15 @@
 package config
 
 import (
+	"errors"
 	"fmt"
-	"github.com/Chandra179/sabaody/access"
-	"github.com/Chandra179/sabaody/cryptoutils"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/sabaody/cryptoutils"
 
 	"github.com/joho/godotenv"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -17,8 +20,18 @@ import (
 // DHTProtocolPrefix isolates our DHT from the public IPFS one.
 const DHTProtocolPrefix = "/p2pchat"
 
+// Modes the program can run in.
+const (
+	ModePeer  = "peer"
+	ModeRelay = "relay"
+)
+
 type Config struct {
-	PeerPrivKey crypto.PrivKey // Will be used as peer ID
+	// Warnings are non-fatal problems found while loading (e.g. deprecated settings).
+	Warnings []string
+
+	// PeerPrivKey is the identity of this peer (peer mode only).
+	PeerPrivKey crypto.PrivKey
 	// PeerAllowlist limits inbound connections to these peers (empty = allow all).
 	PeerAllowlist []peer.ID
 	// DisableReceipts (SEND_RECEIPTS=false) stops us from sending delivery receipts.
@@ -29,67 +42,129 @@ type Config struct {
 	MaxFileSize int64
 	// PeerDB is the path of the contacts/history database (default peers_db/<peer id>.db).
 	PeerDB string
-	//
-	RelayPort    string
-	RelayID      peer.ID
-	RelayPrivKey crypto.PrivKey // WIll be used as peer ID
-	RelayIP      string
+
+	// RelayIP and RelayPort say where the relay is reachable (TCP and UDP/QUIC share the port).
+	RelayIP   string
+	RelayPort string
+	// RelayID is the relay's peer ID. Peers get it from RELAY_PEER_ID; the relay derives it from its key.
+	RelayID peer.ID
+	// RelayPrivKey is the relay's identity (relay mode only).
+	RelayPrivKey crypto.PrivKey
 	// RelayAllowlist limits relay reservations and relayed connections (empty = open relay).
 	RelayAllowlist []peer.ID
 	// RelayDB is the path of the relay mailbox database (default relay_db/mailbox.db).
 	RelayDB string
 }
 
-func LoadConfig() (*Config, error) {
-	if err := godotenv.Load(".env"); err != nil {
-		fmt.Printf("Failed to load .env: %v", err)
+// LoadConfig reads the configuration for the given mode from the environment
+// and an optional .env file. Only the settings a mode needs are required: a
+// peer needs its own key and the relay's public peer ID, the relay needs only
+// its own key.
+func LoadConfig(mode string) (*Config, error) {
+	if mode != ModePeer && mode != ModeRelay {
+		return nil, fmt.Errorf("unknown mode %q", mode)
 	}
-	peerPrivKey, err := cryptoutils.DecodeBase64Key(os.Getenv("PEER_ID"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode relay id: %w", err)
-	}
-	relayPrivKey, err := cryptoutils.DecodeBase64Key(os.Getenv("RELAY_ID"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode relay id: %w", err)
-	}
-	relayID, err := peer.IDFromPrivateKey(relayPrivKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract id from priv key: %w", err)
+	if err := godotenv.Load(".env"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("failed to read .env: %w", err)
 	}
 
-	peerAllow, err := access.ParseList(os.Getenv("PEER_ALLOWLIST"))
-	if err != nil {
+	c := &Config{
+		RelayIP:         os.Getenv("RELAY_IP"),
+		RelayPort:       os.Getenv("RELAY_TCP_PORT"),
+		DownloadDir:     os.Getenv("PEER_DOWNLOAD_DIR"),
+		PeerDB:          os.Getenv("PEER_DB"),
+		RelayDB:         os.Getenv("RELAY_DB"),
+		DisableReceipts: strings.EqualFold(os.Getenv("SEND_RECEIPTS"), "false"),
+	}
+	if c.RelayIP == "" {
+		return nil, errors.New("RELAY_IP is required")
+	}
+	if port, err := strconv.Atoi(c.RelayPort); err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("RELAY_TCP_PORT must be a port number, got %q", c.RelayPort)
+	}
+	if _, err := c.relayAddrs(); err != nil {
+		return nil, err
+	}
+
+	var err error
+	if c.PeerAllowlist, err = access.ParseList(os.Getenv("PEER_ALLOWLIST")); err != nil {
 		return nil, fmt.Errorf("PEER_ALLOWLIST: %w", err)
 	}
-	relayAllow, err := access.ParseList(os.Getenv("RELAY_ALLOWLIST"))
-	if err != nil {
+	if c.RelayAllowlist, err = access.ParseList(os.Getenv("RELAY_ALLOWLIST")); err != nil {
 		return nil, fmt.Errorf("RELAY_ALLOWLIST: %w", err)
 	}
-
-	var maxFileSize int64
 	if v := os.Getenv("PEER_MAX_FILE_MB"); v != "" {
 		mb, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || mb < 1 {
 			return nil, fmt.Errorf("PEER_MAX_FILE_MB must be a positive number, got %q", v)
 		}
-		maxFileSize = mb << 20
+		c.MaxFileSize = mb << 20
 	}
 
-	return &Config{
-		PeerPrivKey:     peerPrivKey,
-		PeerAllowlist:   peerAllow,
-		DownloadDir:     os.Getenv("PEER_DOWNLOAD_DIR"),
-		MaxFileSize:     maxFileSize,
-		PeerDB:          os.Getenv("PEER_DB"),
-		DisableReceipts: strings.EqualFold(os.Getenv("SEND_RECEIPTS"), "false"),
-		//
-		RelayPort:      os.Getenv("RELAY_TCP_PORT"),
-		RelayID:        relayID,
-		RelayPrivKey:   relayPrivKey,
-		RelayIP:        os.Getenv("RELAY_IP"),
-		RelayAllowlist: relayAllow,
-		RelayDB:        os.Getenv("RELAY_DB"),
-	}, nil
+	switch mode {
+	case ModeRelay:
+		err = c.loadRelayIdentity()
+	case ModePeer:
+		err = c.loadPeerIdentity()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (c *Config) loadRelayIdentity() error {
+	key := os.Getenv("RELAY_ID")
+	if key == "" {
+		return errors.New("RELAY_ID (the relay's private key) is required; create one with --genkey")
+	}
+	priv, err := cryptoutils.DecodeBase64Key(key)
+	if err != nil {
+		return fmt.Errorf("RELAY_ID is not a valid private key: %w", err)
+	}
+	id, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		return fmt.Errorf("RELAY_ID: %w", err)
+	}
+	c.RelayPrivKey, c.RelayID = priv, id
+	return nil
+}
+
+func (c *Config) loadPeerIdentity() error {
+	key := os.Getenv("PEER_ID")
+	if key == "" {
+		return errors.New("PEER_ID (your private key) is required; create one with --genkey")
+	}
+	priv, err := cryptoutils.DecodeBase64Key(key)
+	if err != nil {
+		return fmt.Errorf("PEER_ID is not a valid private key: %w", err)
+	}
+	c.PeerPrivKey = priv
+
+	if v := os.Getenv("RELAY_PEER_ID"); v != "" {
+		id, err := peer.Decode(v)
+		if err != nil {
+			return fmt.Errorf("RELAY_PEER_ID is not a valid peer ID: %w", err)
+		}
+		c.RelayID = id
+		return nil
+	}
+	// Older setups put the relay's private key in RELAY_ID and derived the ID from it.
+	if v := os.Getenv("RELAY_ID"); v != "" {
+		relayKey, err := cryptoutils.DecodeBase64Key(v)
+		if err != nil {
+			return fmt.Errorf("RELAY_ID is not a valid private key: %w", err)
+		}
+		id, err := peer.IDFromPrivateKey(relayKey)
+		if err != nil {
+			return fmt.Errorf("RELAY_ID: %w", err)
+		}
+		c.RelayID = id
+		c.Warnings = append(c.Warnings,
+			"RELAY_ID holds the relay's private key; peers only need its public ID. Set RELAY_PEER_ID="+id.String()+" and remove RELAY_ID from this peer's configuration")
+		return nil
+	}
+	return errors.New("RELAY_PEER_ID (the relay's peer ID, printed when the relay starts) is required")
 }
 
 // RelayAddrInfo returns the relay's peer ID with its TCP and QUIC addresses.

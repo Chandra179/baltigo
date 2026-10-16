@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func newKey(t *testing.T) crypto.PrivKey {
@@ -62,5 +63,35 @@ func TestSealRejectsNonEd25519(t *testing.T) {
 	}
 	if _, err := Seal([]byte("x"), pub); err == nil {
 		t.Error("expected error for non-Ed25519 recipient")
+	}
+}
+
+func TestGenerateIdentityRoundTrip(t *testing.T) {
+	key, id, err := GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv, err := DecodeBase64Key(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := peer.IDFromPrivateKey(priv)
+	if err != nil || got != id {
+		t.Errorf("decoded key has peer ID %v (err %v), want %v", got, err, id)
+	}
+	if priv.Type() != crypto.Ed25519 {
+		t.Errorf("key type = %v, want Ed25519", priv.Type())
+	}
+	other, otherID, _ := GenerateIdentity()
+	if other == key || otherID == id {
+		t.Error("two generated identities are identical")
+	}
+}
+
+func TestDecodeBase64KeyRejectsGarbage(t *testing.T) {
+	for _, bad := range []string{"", "not base64!!", "aGVsbG8="} {
+		if _, err := DecodeBase64Key(bad); err == nil {
+			t.Errorf("DecodeBase64Key(%q) accepted invalid input", bad)
+		}
 	}
 }

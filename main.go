@@ -13,10 +13,12 @@ import (
 	"log"
 	"maps"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -308,13 +310,19 @@ func (cli *CLIManager) handleSync() {
 	fmt.Printf("Received %d offline message(s)\n", n)
 }
 
-// pollMailbox collects offline messages at startup and then periodically.
-func (cli *CLIManager) pollMailbox() {
+// pollMailbox collects offline messages at startup and then every 30 seconds until ctx ends.
+func (cli *CLIManager) pollMailbox(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		cli.peer.FetchOffline(ctx) // errors are expected while the relay is unreachable
+		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		cli.peer.FetchOffline(fetchCtx) // errors are expected while the relay is unreachable
 		cancel()
-		time.Sleep(30 * time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -434,13 +442,24 @@ func (cli *CLIManager) handleSend(args []string) {
 	}
 }
 
-func (cli *CLIManager) handleGenkey() {
-	key, err := cryptoutils.GenerateEd25519Key()
+// printIdentity generates a new identity and shows the private key (the value
+// for PEER_ID or RELAY_ID) together with the peer ID others will see.
+func printIdentity() error {
+	key, id, err := cryptoutils.GenerateIdentity()
 	if err != nil {
-		fmt.Printf("Failed to generate key: %v\n", err)
-		return
+		return err
 	}
-	fmt.Println("Generated key:", key)
+	fmt.Println("Private key (keep secret, goes in PEER_ID or RELAY_ID):")
+	fmt.Println("  " + key)
+	fmt.Println("Peer ID (public, safe to share):")
+	fmt.Println("  " + id.String())
+	return nil
+}
+
+func (cli *CLIManager) handleGenkey() {
+	if err := printIdentity(); err != nil {
+		fmt.Printf("Failed to generate key: %v\n", err)
+	}
 }
 
 // handleList prints the peers we know an address for, other than ourselves and the relay.
@@ -495,36 +514,53 @@ func (cli *CLIManager) handleHelp() {
 	fmt.Println("  exit                        - Exit the program")
 }
 
-func (cli *CLIManager) runPeerMode() {
+// runPeerMode runs the interactive prompt until the user exits, stdin closes or ctx is cancelled.
+func (cli *CLIManager) runPeerMode(ctx context.Context) error {
 	if err := cli.initPeer(); err != nil {
-		log.Fatalf("Failed to initialize peer: %v", err)
+		return fmt.Errorf("failed to initialize peer: %w", err)
 	}
+	defer cli.shutdown()
 
-	go cli.pollMailbox()
+	go cli.pollMailbox(ctx)
 	fmt.Println("Peer mode started. Type 'help' for available commands.")
-	scanner := bufio.NewScanner(os.Stdin)
+
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	for {
 		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
+		var line string
+		select {
+		case <-ctx.Done():
+			fmt.Println()
+			return nil
+		case l, ok := <-lines:
+			if !ok {
+				fmt.Println()
+				return nil // stdin closed (Ctrl-D)
+			}
+			line = l
 		}
 
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
 			continue
 		}
-
-		if input == "exit" {
+		command, args := fields[0], fields[1:]
+		if command == "exit" {
 			fmt.Println("Exiting...")
-			cli.peer.Close()
-			cli.peer.Store.Close()
-			os.Exit(0)
+			return nil
 		}
-
-		fields := strings.Fields(input)
-		command := fields[0]
-		args := fields[1:]
 
 		switch command {
 		case "ping":
@@ -559,32 +595,61 @@ func (cli *CLIManager) runPeerMode() {
 	}
 }
 
+// shutdown stops group chat and closes the network host and the database.
+func (cli *CLIManager) shutdown() {
+	cli.peer.Close()
+	if err := cli.peer.Host.Close(); err != nil {
+		log.Printf("Failed to close host: %v", err)
+	}
+	if err := cli.peer.Store.Close(); err != nil {
+		log.Printf("Failed to close database: %v", err)
+	}
+}
+
 func main() {
-	mode := flag.String("mode", "", "Mode to run: 'relay' or 'peer' (required for startup)")
+	os.Exit(run())
+}
+
+func run() int {
+	mode := flag.String("mode", "", "Mode to run: 'relay' or 'peer'")
+	genkey := flag.Bool("genkey", false, "generate a new identity key and exit (needs no configuration)")
 	flag.Parse()
 
-	if *mode == "" {
-		fmt.Fprintln(os.Stderr, "Error: --mode flag is required ('relay' or 'peer')")
-		os.Exit(1)
+	if *genkey {
+		if err := printIdentity(); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			return 1
+		}
+		return 0
+	}
+	if *mode != config.ModePeer && *mode != config.ModeRelay {
+		fmt.Fprintln(os.Stderr, "Error: --mode must be 'relay' or 'peer' (or use --genkey to create a key)")
+		flag.Usage()
+		return 2
 	}
 
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfig(*mode)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+	for _, w := range cfg.Warnings {
+		fmt.Fprintln(os.Stderr, "WARNING:", w)
 	}
 
-	switch *mode {
-	case "relay":
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if *mode == config.ModeRelay {
 		fmt.Println("Running in relay mode...")
-		relay.RunRelay(cfg)
-	case "peer":
+		err = relay.Run(ctx, cfg)
+	} else {
 		fmt.Println("Running in peer mode...")
-		cli := NewCLIManager(cfg)
-		cli.runPeerMode()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown mode: %s\n", *mode)
-		os.Exit(1)
+		err = NewCLIManager(cfg).runPeerMode(ctx)
 	}
-
-	select {}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+	return 0
 }
