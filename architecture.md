@@ -1,4 +1,4 @@
-# Sabaody: Private Peer-to-Peer Chat
+# Baltigo: Private Peer-to-Peer Chat
 
 Terminal chat where peers talk directly when they can and through a small public relay when they cannot. Identity is a key pair, there are no accounts, and the relay never sees message contents.
 
