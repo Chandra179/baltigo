@@ -106,7 +106,14 @@ Sender                          Relay mailbox                          Recipient
 ## Group chat
 
 ```text
-STEP 1. JOIN (every member does this and gets the same two results)
+STEP 0. SHARE THE SECRET (outside the app, the app never sends it)
+
+   one person picks a group name + secret, e.g. "friends" + "purple-tiger-42"
+              |  tells the others in person, by phone, or in another trusted chat
+              v
+   every member now knows the same name + secret
+
+STEP 1. JOIN (each member's app computes this locally and gets the same two results)
 
    group name + shared secret
               |
