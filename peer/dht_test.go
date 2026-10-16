@@ -3,7 +3,7 @@ package peer
 import (
 	"testing"
 
-	"p2p/config"
+	"github.com/Chandra179/sabaody/config"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"

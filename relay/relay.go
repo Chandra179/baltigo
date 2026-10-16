@@ -2,9 +2,9 @@ package relay
 
 import (
 	"fmt"
-	"p2p/access"
-	"p2p/config"
-	"p2p/mailbox"
+	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/sabaody/config"
+	"github.com/Chandra179/sabaody/mailbox"
 	"path/filepath"
 
 	"github.com/libp2p/go-libp2p"

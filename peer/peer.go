@@ -3,10 +3,10 @@ package peer
 import (
 	"context"
 	"fmt"
+	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/sabaody/store"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"log"
-	"p2p/access"
-	"p2p/store"
 	"sync"
 	"sync/atomic"
 	"time"

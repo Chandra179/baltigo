@@ -2,14 +2,14 @@ package peer
 
 import (
 	"bytes"
-	"p2p/wire"
+	"github.com/Chandra179/sabaody/wire"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"p2p/cryptoutils"
-	"p2p/mailbox"
-	"p2p/store"
+	"github.com/Chandra179/sabaody/cryptoutils"
+	"github.com/Chandra179/sabaody/mailbox"
+	"github.com/Chandra179/sabaody/store"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )

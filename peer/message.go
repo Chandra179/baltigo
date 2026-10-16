@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/Chandra179/sabaody/wire"
 	"io"
-	"p2p/wire"
 	"sync"
 	"time"
 

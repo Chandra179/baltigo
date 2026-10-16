@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"p2p/access"
-	"p2p/wire"
+	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/sabaody/wire"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"

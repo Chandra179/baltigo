@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"p2p/access"
+	"github.com/Chandra179/sabaody/access"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"

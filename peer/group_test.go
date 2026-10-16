@@ -1,13 +1,13 @@
 package peer
 
 import (
-	"p2p/access"
+	"github.com/Chandra179/sabaody/access"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"p2p/store"
+	"github.com/Chandra179/sabaody/store"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )

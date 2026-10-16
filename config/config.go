@@ -2,9 +2,9 @@ package config
 
 import (
 	"fmt"
+	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/sabaody/cryptoutils"
 	"os"
-	"p2p/access"
-	"p2p/cryptoutils"
 	"strconv"
 	"strings"
 

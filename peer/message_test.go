@@ -2,7 +2,7 @@ package peer
 
 import (
 	"bytes"
-	"p2p/store"
+	"github.com/Chandra179/sabaody/store"
 	"path/filepath"
 	"testing"
 	"time"
