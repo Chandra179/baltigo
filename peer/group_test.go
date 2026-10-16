@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"encoding/hex"
 	"github.com/Chandra179/sabaody/access"
 	"path/filepath"
 	"sync"
@@ -244,3 +245,19 @@ func TestDeriveGroup(t *testing.T) {
 }
 
 func newAllow(ids ...peer.ID) access.Allowlist { return access.NewAllowlist(ids...) }
+
+// Topic and key derivation must stay stable, or existing groups would split.
+func TestDeriveGroupKnownAnswer(t *testing.T) {
+	topic, aead, err := deriveGroup("team", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantTopic = "p2pchat/group/7fea111e0e9a6736aac695a96b653db1"
+	if topic != wantTopic {
+		t.Errorf("topic = %s, want %s", topic, wantTopic)
+	}
+	ct := aead.Seal(nil, make([]byte, aead.NonceSize()), []byte("x"), []byte(topic))
+	if got := hex.EncodeToString(ct); got != "a35dc94e6f862f0f95eb392b26a83237d6" {
+		t.Errorf("ciphertext = %s: group key changed", got)
+	}
+}

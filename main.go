@@ -11,9 +11,10 @@ import (
 	"github.com/Chandra179/sabaody/relay"
 	"github.com/Chandra179/sabaody/store"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -214,12 +215,7 @@ func (cli *CLIManager) handleGroup(args []string) {
 		if len(groups) == 0 {
 			fmt.Println("Not in any group. Use: group join <name> [secret]")
 		}
-		names := make([]string, 0, len(groups))
-		for name := range groups {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
+		for _, name := range slices.Sorted(maps.Keys(groups)) {
 			fmt.Printf("  #%-20s %d other member(s) connected\n", name, groups[name])
 		}
 	case "say":

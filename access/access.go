@@ -17,7 +17,7 @@ type Allowlist map[peer.ID]struct{}
 // ParseList parses a comma-separated list of peer IDs.
 func ParseList(s string) ([]peer.ID, error) {
 	var ids []peer.ID
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

@@ -116,7 +116,7 @@ func (c *Config) relayAddrs() ([]ma.Multiaddr, error) {
 // RelayListenAddrs returns the addresses the relay listens on (TCP and QUIC).
 func (c *Config) RelayListenAddrs() []string {
 	return []string{
-		fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", c.RelayPort),
-		fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", c.RelayPort),
+		"/ip4/0.0.0.0/tcp/" + c.RelayPort,
+		"/ip4/0.0.0.0/udp/" + c.RelayPort + "/quic-v1",
 	}
 }

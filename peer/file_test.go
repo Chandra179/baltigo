@@ -99,7 +99,7 @@ func TestSendFile(t *testing.T) {
 func TestSendFileNeverOverwrites(t *testing.T) {
 	env := newFileEnv(t, false)
 	path, _ := writeTemp(t, "photo.jpg", 10_000)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := env.alice.SendFile(t.Context(), env.bob.Host.ID(), path); err != nil {
 			t.Fatal(err)
 		}
@@ -278,5 +278,47 @@ func TestSafeFileName(t *testing.T) {
 	got := safeFileName(long)
 	if len(got) > maxFileNameLen || !strings.HasSuffix(got, ".txt") || !strings.HasPrefix(got, "é") {
 		t.Errorf("long name = %q (%d bytes)", got, len(got))
+	}
+}
+
+// Symlinks planted in the download directory must never be followed or written through.
+func TestFileSymlinksAreNotFollowed(t *testing.T) {
+	env := newFileEnv(t, false)
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("do not touch"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(env.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// a symlink with the final name, and a dangling one with the ".part" name
+	if err := os.Symlink(secret, filepath.Join(env.dir, "evil.txt")); err != nil {
+		t.Fatal(err)
+	}
+	created := filepath.Join(outside, "created-through-symlink")
+	if err := os.Symlink(created, filepath.Join(env.dir, "trap.bin.part")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"evil.txt", "trap.bin"} {
+		path, _ := writeTemp(t, name, 1000)
+		before := env.received.Load()
+		if err := env.alice.SendFile(t.Context(), env.bob.Host.ID(), path); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		waitFor(t, "file callback", func() bool { return env.received.Load() == before+1 })
+	}
+
+	if got, _ := os.ReadFile(secret); string(got) != "do not touch" {
+		t.Errorf("file behind symlink was overwritten: %q", got)
+	}
+	if _, err := os.Lstat(created); err == nil {
+		t.Error("file was created through a symlink")
+	}
+	for _, want := range []string{"evil (1).txt", "trap (1).bin"} {
+		if _, err := os.Lstat(filepath.Join(env.dir, want)); err != nil {
+			t.Errorf("expected %q to be saved: %v", want, err)
+		}
 	}
 }

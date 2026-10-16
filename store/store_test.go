@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -194,5 +195,17 @@ func TestMarkDelivered(t *testing.T) {
 	}
 	if h[0].Text != "one" || h[2].Text != "incoming with same seq" {
 		t.Errorf("order or content changed: %+v", h)
+	}
+}
+
+// The database key must never change, or existing databases become unreadable.
+func TestDeriveKeyKnownAnswer(t *testing.T) {
+	k, err := deriveKey([]byte("fixed identity key bytes for a golden test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "d460505f0cd683b15da65b79ef9844d882e663ae5bb063eaa2012ee03bb022a5"
+	if got := hex.EncodeToString(k); got != want {
+		t.Errorf("derived key = %s, want %s", got, want)
 	}
 }

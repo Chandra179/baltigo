@@ -1,7 +1,6 @@
 package peer
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -35,19 +34,13 @@ type Message struct {
 }
 
 func (m *Message) signedBytes() []byte {
-	var b bytes.Buffer
-	b.WriteString(signDomain)
+	b := []byte(signDomain)
 	for _, s := range []string{m.From, m.To, m.Text} {
-		var l [binary.MaxVarintLen64]byte
-		n := binary.PutUvarint(l[:], uint64(len(s)))
-		b.Write(l[:n])
-		b.WriteString(s)
+		b = binary.AppendUvarint(b, uint64(len(s)))
+		b = append(b, s...)
 	}
-	var num [16]byte
-	binary.BigEndian.PutUint64(num[:8], m.Seq)
-	binary.BigEndian.PutUint64(num[8:], uint64(m.Timestamp))
-	b.Write(num[:])
-	return b.Bytes()
+	b = binary.BigEndian.AppendUint64(b, m.Seq)
+	return binary.BigEndian.AppendUint64(b, uint64(m.Timestamp))
 }
 
 // NewSignedMessage creates a message from `from` to `to` signed with priv.

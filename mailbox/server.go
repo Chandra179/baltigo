@@ -169,9 +169,7 @@ func (s *Server) serve(remote peer.ID, req Request) Response {
 }
 
 func seqKey(seq uint64) []byte {
-	k := make([]byte, 8)
-	binary.BigEndian.PutUint64(k, seq)
-	return k
+	return binary.BigEndian.AppendUint64(nil, seq)
 }
 
 func (s *Server) expired(created int64) bool {

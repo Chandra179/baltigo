@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -107,10 +108,7 @@ func (o *FileOffer) Verify(self, remote peer.ID, now time.Time) error {
 // safeFileName reduces a name chosen by the sender to a plain file name that
 // cannot point outside the download directory.
 func safeFileName(name string) string {
-	name = strings.ReplaceAll(name, "\\", "/")
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
-	}
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
 	name = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || r == '/' || r == ':' {
 			return -1
@@ -225,21 +223,27 @@ func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
 		return refuse(s, "busy, too many transfers in progress")
 	}
 
+	// All file operations go through os.Root, which refuses to leave the download
+	// directory (via "..", absolute paths or symlinks) whatever the name is.
 	dir := p.downloadDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return refuse(s, "recipient cannot store files")
 	}
-	name := safeFileName(offer.Name)
-	part, dest, err := reserveFile(dir, name)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return refuse(s, "recipient cannot store files")
 	}
-	partPath := part.Name()
+	defer root.Close()
+	part, destName, err := reserveFile(root, safeFileName(offer.Name))
+	if err != nil {
+		return refuse(s, "recipient cannot store files")
+	}
+	partName := destName + ".part"
 	committed := false
 	defer func() {
 		part.Close()
 		if !committed {
-			os.Remove(partPath)
+			root.Remove(partName)
 		}
 	}()
 
@@ -257,55 +261,53 @@ func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
 	if err := part.Close(); err != nil {
 		return refuse(s, "recipient cannot store files")
 	}
-	final, err := commitFile(partPath, dest)
-	if err != nil {
+	if err := commitFile(root, partName, destName); err != nil {
 		return refuse(s, "recipient cannot store files")
 	}
 	committed = true
+	final := filepath.Join(dir, destName)
 	s.SetWriteDeadline(time.Now().Add(readTimeout))
 	wire.Write(s, fileReply{OK: true}, maxFrameSize) // best effort: the file is already safe
 
-	p.recordFile(remote, true, filepath.Base(final), offer.Size)
+	p.recordFile(remote, true, destName, offer.Size)
 	if p.OnFile != nil {
 		p.OnFile(remote, final, offer.Size)
 	}
 	return nil
 }
 
-// reserveFile picks a destination name inside dir that does not exist yet and
+// reserveFile picks a destination name inside root that does not exist yet and
 // opens a private ".part" file for it. Existing files are never overwritten.
-func reserveFile(dir, name string) (*os.File, string, error) {
+func reserveFile(root *os.Root, name string) (*os.File, string, error) {
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		candidate := name
 		if i > 0 {
 			candidate = fmt.Sprintf("%s (%d)%s", base, i, ext)
 		}
-		dest := filepath.Join(dir, candidate)
-		if _, err := os.Lstat(dest); err == nil {
+		if _, err := root.Lstat(candidate); err == nil {
 			continue
 		}
-		f, err := os.OpenFile(dest+".part", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		f, err := root.OpenFile(candidate+".part", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
 		if err != nil {
 			return nil, "", err
 		}
-		return f, dest, nil
+		return f, candidate, nil
 	}
 	return nil, "", errors.New("too many files with this name")
 }
 
-// commitFile moves the finished ".part" file to dest without replacing an
-// existing file.
-func commitFile(partPath, dest string) (string, error) {
-	if err := os.Link(partPath, dest); err != nil {
-		return "", err
+// commitFile moves the finished ".part" file to its final name without
+// replacing an existing file (a hard link fails if the target exists).
+func commitFile(root *os.Root, partName, destName string) error {
+	if err := root.Link(partName, destName); err != nil {
+		return err
 	}
-	os.Remove(partPath)
-	return dest, nil
+	return root.Remove(partName)
 }
 
 func (p *PeerInfo) recordFile(id peer.ID, incoming bool, name string, size int64) {

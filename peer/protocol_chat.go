@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Chandra179/sabaody/cryptoutils"
 	"github.com/Chandra179/sabaody/mailbox"
@@ -85,7 +86,7 @@ func (p *PeerInfo) nextSeq() uint64 {
 func (p *PeerInfo) SendSimple(targetPeerID peer.ID, text string) (queued bool, err error) {
 	priv := p.Host.Peerstore().PrivKey(p.Host.ID())
 	if priv == nil {
-		return false, fmt.Errorf("no private key for local peer")
+		return false, errors.New("no private key for local peer")
 	}
 	msg, err := NewSignedMessage(priv, p.Host.ID(), targetPeerID, p.nextSeq(), text)
 	if err != nil {
@@ -152,7 +153,7 @@ func (p *PeerInfo) FetchOffline(ctx context.Context) (int, error) {
 	}
 	priv := p.Host.Peerstore().PrivKey(p.Host.ID())
 	if priv == nil {
-		return 0, fmt.Errorf("no private key for local peer")
+		return 0, errors.New("no private key for local peer")
 	}
 	if err := p.Host.Connect(ctx, p.Relay); err != nil {
 		return 0, fmt.Errorf("cannot reach relay: %w", err)

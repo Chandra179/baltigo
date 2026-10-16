@@ -3,16 +3,16 @@ package peer
 import (
 	"context"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"regexp"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,7 +22,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/hkdf"
 )
 
 const (
@@ -65,8 +64,8 @@ type group struct {
 // empty secret anyone who knows the group name can read it.
 func deriveGroup(name, secret string) (topic string, aead cipher.AEAD, err error) {
 	key := argon2.IDKey([]byte(secret), []byte("p2pchat-group-v1:"+name), 1, 64*1024, 4, 32)
-	tid := make([]byte, 16)
-	if _, err := io.ReadFull(hkdf.New(sha256.New, key, nil, []byte("p2pchat-group-topic")), tid); err != nil {
+	tid, err := hkdf.Key(sha256.New, key, nil, "p2pchat-group-topic", 16)
+	if err != nil {
 		return "", nil, err
 	}
 	aead, err = chacha20poly1305.NewX(key)
@@ -217,7 +216,7 @@ func (p *PeerInfo) GroupPeers(name string) ([]peer.ID, error) {
 		return nil, ErrNotJoined
 	}
 	peers := g.topic.ListPeers()
-	sort.Slice(peers, func(i, j int) bool { return peers[i] < peers[j] })
+	slices.Sort(peers)
 	return peers, nil
 }
 

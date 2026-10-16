@@ -7,15 +7,16 @@ package store
 import (
 	"bytes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/hkdf"
 )
 
 var (
@@ -72,6 +72,11 @@ type Entry struct {
 	Text      string    `json:"text"`
 }
 
+// deriveKey derives the database encryption key from the identity key bytes.
+func deriveKey(identity []byte) ([]byte, error) {
+	return hkdf.Key(sha256.New, identity, nil, kdfInfo, chacha20poly1305.KeySize)
+}
+
 // Open opens (creating if needed) the database at path. priv is the node's
 // identity key, from which the encryption key is derived.
 func Open(path string, priv crypto.PrivKey) (*Store, error) {
@@ -79,8 +84,8 @@ func Open(path string, priv crypto.PrivKey) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read identity key: %w", err)
 	}
-	key := make([]byte, chacha20poly1305.KeySize)
-	if _, err := io.ReadFull(hkdf.New(sha256.New, raw, nil, []byte(kdfInfo)), key); err != nil {
+	key, err := deriveKey(raw)
+	if err != nil {
 		return nil, err
 	}
 	aead, err := chacha20poly1305.NewX(key)
@@ -311,13 +316,11 @@ func (s *Store) appendEntry(key []byte, e Entry) error {
 		if err != nil {
 			return err
 		}
-		var k [8]byte
-		binary.BigEndian.PutUint64(k[:], seq)
 		sealed, err := s.seal(data, key)
 		if err != nil {
 			return err
 		}
-		return b.Put(k[:], sealed)
+		return b.Put(binary.BigEndian.AppendUint64(nil, seq), sealed)
 	})
 }
 
@@ -360,9 +363,7 @@ func (s *Store) history(key []byte, limit int) ([]Entry, error) {
 		}
 		return nil
 	})
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
+	slices.Reverse(out)
 	return out, err
 }
 

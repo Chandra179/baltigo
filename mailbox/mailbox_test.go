@@ -110,7 +110,7 @@ func TestLimits(t *testing.T) {
 	if err := Put(t.Context(), alice, relay.ID(), bob.ID(), nil); err == nil {
 		t.Error("empty blob accepted")
 	}
-	for i := 0; i < MaxPerRecipient; i++ {
+	for i := range MaxPerRecipient {
 		if err := Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("m")); err != nil {
 			t.Fatalf("put %d: %v", i, err)
 		}
@@ -181,7 +181,7 @@ func TestExpiryDeletesEveryEntry(t *testing.T) {
 		alice, bob := newHost(t), newHost(t)
 		connect(t, alice, relay)
 		connect(t, bob, relay)
-		for i := 0; i < 6; i++ {
+		for i := range 6 {
 			Put(t.Context(), alice, relay.ID(), bob.ID(), []byte{byte('a' + i)})
 		}
 		srv.now = func() time.Time { return time.Now().Add(TTL + time.Hour) }

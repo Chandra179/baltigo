@@ -13,13 +13,13 @@ type msg struct {
 
 func TestRoundTripMultipleFrames(t *testing.T) {
 	var buf bytes.Buffer
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := Write(&buf, msg{i, "x"}, 1024); err != nil {
 			t.Fatal(err)
 		}
 	}
 	r := bufio.NewReader(&buf)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var m msg
 		if err := Read(r, &m, 1024); err != nil || m.N != i {
 			t.Fatalf("frame %d: %+v, %v", i, m, err)
