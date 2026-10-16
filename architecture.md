@@ -106,14 +106,40 @@ Sender                          Relay mailbox                          Recipient
 ## Group chat
 
 ```text
-secret + group name --Argon2id--> 32-byte key --HKDF--> topic id (a hash; reveals neither name nor secret)
-                                      |
-author: nonce | XChaCha20-Poly1305( key, payload, associated data = topic )
-                                      |
-                              GossipSub mesh for that topic
-                                      |
-member: authorship verified by the pub/sub signature -> decrypt -> check time window
-        -> drop repeated nonces -> display and store
+STEP 1. JOIN (every member does this and gets the same two results)
+
+   group name + shared secret
+              |
+              |  Argon2id  (deliberately slow, so guessing a weak secret is costly)
+              v
+   GROUP KEY, 32 bytes                       <- stays private; encrypts and decrypts
+              |
+              |  HKDF  (one-way: the key cannot be recovered from the result)
+              v
+   TOPIC ID                                  <- a public label for the "room";
+                                                reveals neither the name nor the secret
+
+STEP 2. SEND
+
+   message text
+        |  encrypt with the GROUP KEY (XChaCha20-Poly1305)
+        |  a fresh random nonce is used each time, and the TOPIC ID is
+        |  bound in, so the ciphertext only works in this room
+        v
+   nonce + ciphertext
+        |  signed by the author and published on the TOPIC ID
+        v
+   GossipSub mesh: the members subscribed to that topic pass it along
+
+STEP 3. RECEIVE (a message is dropped at the first check it fails)
+
+   1. Signature valid?        checked by the mesh, so the shown author is real
+   2. Decrypts with my key?   fails if the sender used a different secret
+   3. Timestamp recent?       old messages are dropped
+   4. Nonce not seen before?  a repeated message is dropped
+        |
+        v
+   display and store
 ```
 
 - **A group is a shared secret:** The name and secret together derive both the encryption key and the topic. A peer with the wrong secret lands on a different, empty topic and cannot read or inject messages into yours.
