@@ -32,7 +32,7 @@ func openTemp(t *testing.T, priv crypto.PrivKey, path string) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -92,8 +92,8 @@ func TestHistoryPersistsAndIsOrdered(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s.AppendMessage(Entry{Peer: bob, Text: "for bob"})
-	s.Close()
+	_ = s.AppendMessage(Entry{Peer: bob, Text: "for bob"})
+	_ = s.Close()
 
 	s = openTemp(t, priv, path) // reopen: data survives
 	all, err := s.History(alice, 0)
@@ -117,9 +117,9 @@ func TestEncryptedAtRest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
 	_, alice := newKey(t)
 	s, _ := Open(path, priv)
-	s.AddContact("SecretName", alice)
-	s.AppendMessage(Entry{Peer: alice, Text: "top secret text"})
-	s.Close()
+	_ = s.AddContact("SecretName", alice)
+	_ = s.AppendMessage(Entry{Peer: alice, Text: "top secret text"})
+	_ = s.Close()
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -175,9 +175,9 @@ func TestMarkDelivered(t *testing.T) {
 	priv, _ := newKey(t)
 	s := openTemp(t, priv, filepath.Join(t.TempDir(), "db"))
 	_, alice := newKey(t)
-	s.AppendMessage(Entry{Peer: alice, Seq: 10, Text: "one"})
-	s.AppendMessage(Entry{Peer: alice, Seq: 11, Text: "two"})
-	s.AppendMessage(Entry{Peer: alice, Seq: 10, Incoming: true, Text: "incoming with same seq"})
+	_ = s.AppendMessage(Entry{Peer: alice, Seq: 10, Text: "one"})
+	_ = s.AppendMessage(Entry{Peer: alice, Seq: 11, Text: "two"})
+	_ = s.AppendMessage(Entry{Peer: alice, Seq: 10, Incoming: true, Text: "incoming with same seq"})
 
 	if found, err := s.MarkDelivered(alice, 99); err != nil || found {
 		t.Errorf("unknown seq: %v, %v", found, err)

@@ -1,4 +1,4 @@
-module github.com/Chandra179/sabaody
+module github.com/Chandra179/baltigo
 
 go 1.27.2
 

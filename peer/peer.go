@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Chandra179/sabaody/access"
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/access"
+	"github.com/Chandra179/baltigo/store"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"log"
 	"sync"
@@ -89,15 +89,6 @@ func InitPeerHost(peerPrivKey crypto.PrivKey, relay peer.AddrInfo, st *store.Sto
 	// Keep the relay's addresses so we can redial it for the mailbox after a disconnect.
 	h.Peerstore().AddAddrs(relay.ID, relay.Addrs, peerstore.PermanentAddrTTL)
 	p := PeerInfo{Host: h, Store: st, Relay: relay, allow: access.NewAllowlist(allowlist...), DisableReceipts: opts.DisableReceipts, DownloadDir: opts.DownloadDir, MaxFileSize: opts.MaxFileSize}
-	p.OnMessage = func(from peer.ID, text string) {
-		fmt.Printf("[%s] %s\n", p.DisplayName(from), text)
-	}
-	p.OnFile = func(from peer.ID, path string, size int64) {
-		fmt.Printf("[%s] sent you a file: %s (%d bytes)\n", p.DisplayName(from), path, size)
-	}
-	p.OnGroupMessage = func(group string, from peer.ID, text string) {
-		fmt.Printf("[#%s] %s: %s\n", group, p.DisplayName(from), text)
-	}
 	p.ChatHandler()
 	log.Printf("Peer initialized - ID: %s, Protocols: %v", h.ID(), h.Mux().Protocols())
 

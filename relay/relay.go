@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/Chandra179/sabaody/access"
-	"github.com/Chandra179/sabaody/config"
-	"github.com/Chandra179/sabaody/mailbox"
+	"github.com/Chandra179/baltigo/access"
+	"github.com/Chandra179/baltigo/config"
+	"github.com/Chandra179/baltigo/mailbox"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -51,7 +51,7 @@ func Start(cfg *config.Config) (*Relay, error) {
 	// Serve the private DHT so peers can bootstrap from the relay.
 	r.dht, err = dht.New(h, dht.Mode(dht.ModeServer), dht.ProtocolPrefix(config.DHTProtocolPrefix))
 	if err != nil {
-		r.Close()
+		_ = r.Close()
 		return nil, fmt.Errorf("failed to start DHT: %w", err)
 	}
 
@@ -62,7 +62,7 @@ func Start(cfg *config.Config) (*Relay, error) {
 	}
 	r.mailbox, err = mailbox.NewServer(dbPath, access.NewAllowlist(cfg.RelayAllowlist...))
 	if err != nil {
-		r.Close()
+		_ = r.Close()
 		return nil, fmt.Errorf("failed to start mailbox: %w", err)
 	}
 	r.mailbox.Register(h)
@@ -84,7 +84,10 @@ func (r *Relay) Close() error {
 // Run starts the relay, prints how peers should reach it and serves until ctx is cancelled.
 func Run(ctx context.Context, cfg *config.Config) error {
 	if len(cfg.RelayAllowlist) == 0 {
-		fmt.Println("WARNING: RELAY_ALLOWLIST is empty, the relay is open to everyone")
+		if !cfg.RelayOpen {
+			return errors.New("RELAY_ALLOWLIST is empty: list the peer IDs allowed to use the relay, or set RELAY_OPEN=true to run an open relay")
+		}
+		fmt.Println("WARNING: RELAY_OPEN=true and RELAY_ALLOWLIST is empty, the relay is open to everyone")
 	}
 	r, err := Start(cfg)
 	if err != nil {

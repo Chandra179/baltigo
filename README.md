@@ -1,4 +1,4 @@
-# Sabaody
+# Baltigo
 
 Private peer-to-peer chat for the terminal, built on [libp2p](https://libp2p.io/). Peers talk directly when they can and through a small public relay when they cannot. There are no accounts and no central server: your identity is a key pair, and the relay never sees message contents.
 
@@ -46,6 +46,7 @@ On the public machine, create a `.env` file:
 RELAY_ID=<the relay's private key>
 RELAY_IP=<the relay's public IP>
 RELAY_TCP_PORT=4001
+RELAY_ALLOWLIST=<comma-separated peer IDs allowed to use the relay>
 ```
 
 ```bash
@@ -82,7 +83,7 @@ Exchange peer IDs out of band (the ID is printed at startup), add each other as 
 > contact add bob 12D3KooW...
 Added contact bob
 > dht
-Successfully advertised. TTL: 3h0m0s
+Successfully advertised.
 Total found peers (excluding self): 1
 > ping bob
 Reply from bob: time=762µs
@@ -105,7 +106,8 @@ Settings come from the environment or a `.env` file in the working directory.
 | `RELAY_PEER_ID` | peers | The relay's public peer ID |
 | `PEER_ID` | peers | This peer's private key |
 | `PEER_ALLOWLIST` | peers | Comma-separated peer IDs allowed to connect to you and to send you offline messages (empty = anyone) |
-| `RELAY_ALLOWLIST` | relay | Comma-separated peer IDs allowed to use the relay and mailbox (empty = open relay) |
+| `RELAY_ALLOWLIST` | relay | Comma-separated peer IDs allowed to use the relay and mailbox (required unless `RELAY_OPEN=true`) |
+| `RELAY_OPEN` | relay | `true` to run an open relay with no allowlist (anyone can use the relay and mailbox) |
 | `SEND_RECEIPTS` | peers | `false` to stop sending delivery receipts (default: send) |
 | `PEER_DOWNLOAD_DIR` | peers | Where received files are saved (default `downloads`) |
 | `PEER_MAX_FILE_MB` | peers | Largest file accepted, in MiB (default 100) |
@@ -138,7 +140,7 @@ Type `help` in peer mode to list them.
 **Offline messages**
 - The relay can see who leaves a message for whom and when, but not the contents.
 - Each recipient has at most 200 waiting messages of up to 64 KiB, kept for 7 days.
-- Set `RELAY_ALLOWLIST` so only your own peers can use the relay and mailbox.
+- The relay refuses to start without `RELAY_ALLOWLIST` (only your own peers can use the relay and mailbox) unless you set `RELAY_OPEN=true`.
 - Only Ed25519 identities (what `--genkey` creates) can receive offline messages.
 - Sealing uses the recipient's long-term key: someone who later steals that key could read mailbox traffic they captured earlier.
 
@@ -161,7 +163,7 @@ Type `help` in peer mode to list them.
 ## Development
 
 ```bash
-make build   # bin/sabaody
+make build   # bin/baltigo
 make test    # go test -race ./...
 make vet
 make lint    # needs golangci-lint
@@ -169,7 +171,7 @@ make peer    # go run . --mode=peer
 make relay   # go run . --mode=relay
 ```
 
-The module path is `github.com/Chandra179/sabaody`. Tests start real libp2p nodes on localhost and need no network access.
+The module path is `github.com/Chandra179/baltigo`. Tests start real libp2p nodes on localhost and need no network access.
 
 ## Resources
 

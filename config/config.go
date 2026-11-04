@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Chandra179/sabaody/access"
-	"github.com/Chandra179/sabaody/cryptoutils"
+	"github.com/Chandra179/baltigo/access"
+	"github.com/Chandra179/baltigo/cryptoutils"
 
 	"github.com/joho/godotenv"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -18,7 +18,7 @@ import (
 )
 
 // DHTProtocolPrefix isolates our DHT from the public IPFS one.
-const DHTProtocolPrefix = "/p2pchat"
+const DHTProtocolPrefix = "/baltigo"
 
 // Modes the program can run in.
 const (
@@ -52,6 +52,8 @@ type Config struct {
 	RelayPrivKey crypto.PrivKey
 	// RelayAllowlist limits relay reservations and relayed connections (empty = open relay).
 	RelayAllowlist []peer.ID
+	// RelayOpen (RELAY_OPEN=true) lets the relay start without an allowlist, open to everyone.
+	RelayOpen bool
 	// RelayDB is the path of the relay mailbox database (default relay_db/mailbox.db).
 	RelayDB string
 }
@@ -75,6 +77,7 @@ func LoadConfig(mode string) (*Config, error) {
 		PeerDB:          os.Getenv("PEER_DB"),
 		RelayDB:         os.Getenv("RELAY_DB"),
 		DisableReceipts: strings.EqualFold(os.Getenv("SEND_RECEIPTS"), "false"),
+		RelayOpen:       strings.EqualFold(os.Getenv("RELAY_OPEN"), "true"),
 	}
 	if c.RelayIP == "" {
 		return nil, errors.New("RELAY_IP is required")

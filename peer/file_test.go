@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/store"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )

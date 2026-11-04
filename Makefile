@@ -1,6 +1,6 @@
 .PHONY: build test vet lint peer relay genkey
 
-BIN := bin/sabaody
+BIN := bin/baltigo
 
 build:
 	go build -o $(BIN) .

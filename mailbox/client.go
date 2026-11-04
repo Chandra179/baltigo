@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/wire"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -18,11 +18,11 @@ func call(ctx context.Context, h host.Host, relay peer.ID, fn func(do func(Reque
 	if err != nil {
 		return fmt.Errorf("cannot reach mailbox: %w", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if dl, ok := ctx.Deadline(); ok {
-		st.SetDeadline(dl)
+		_ = st.SetDeadline(dl)
 	} else {
-		st.SetDeadline(time.Now().Add(sessionTimeout))
+		_ = st.SetDeadline(time.Now().Add(sessionTimeout))
 	}
 	r := bufio.NewReader(st)
 	do := func(req Request) (Response, error) {

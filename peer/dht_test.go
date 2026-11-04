@@ -3,7 +3,7 @@ package peer
 import (
 	"testing"
 
-	"github.com/Chandra179/sabaody/config"
+	"github.com/Chandra179/baltigo/config"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -16,7 +16,7 @@ func TestInitDHTBootstrapsFromRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if _, err := dht.New(r, dht.Mode(dht.ModeServer), dht.ProtocolPrefix(config.DHTProtocolPrefix)); err != nil {
 		t.Fatal(err)
 	}

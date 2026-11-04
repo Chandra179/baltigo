@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/wire"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	// RECEIPT_PROTOCOL carries signed delivery receipts.
-	RECEIPT_PROTOCOL = "/private-chat/receipt/1.0.0"
+	// ReceiptProtocol carries signed delivery receipts.
+	ReceiptProtocol = "/baltigo/receipt/1.0.0"
 
 	kindReceipt    = "receipt"
 	receiptVersion = 1
-	receiptDomain  = "p2pchat-receipt-v1"
+	receiptDomain  = "baltigo-receipt-v1"
 	maxReceiptSize = 4 << 10
 )
 
@@ -78,21 +78,21 @@ func (r *Receipt) Verify(self, remote peer.ID, now time.Time, maxAge time.Durati
 
 // receiptHandler registers the stream handler that receives receipts.
 func (p *PeerInfo) receiptHandler() {
-	p.Host.SetStreamHandler(RECEIPT_PROTOCOL, func(s network.Stream) {
-		defer s.Close()
+	p.Host.SetStreamHandler(ReceiptProtocol, func(s network.Stream) {
+		defer func() { _ = s.Close() }()
 		if err := s.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
-			s.Reset()
+			_ = s.Reset()
 			return
 		}
 		remote := s.Conn().RemotePeer()
 		var r Receipt
 		if err := wire.Read(s, &r, maxReceiptSize); err != nil {
-			s.Reset()
+			_ = s.Reset()
 			return
 		}
 		if err := r.Verify(p.Host.ID(), remote, time.Now(), maxClockSkew); err != nil {
 			log.Printf("Rejected receipt from %s: %v", remote, err)
-			s.Reset()
+			_ = s.Reset()
 			return
 		}
 		p.handleReceipt(remote, r.Seq)
@@ -132,9 +132,9 @@ func (p *PeerInfo) sendReceipt(to peer.ID, seq uint64) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	s, err := p.Host.NewStream(network.WithAllowLimitedConn(ctx, "receipt"), to, RECEIPT_PROTOCOL)
+	s, err := p.Host.NewStream(network.WithAllowLimitedConn(ctx, "receipt"), to, ReceiptProtocol)
 	if err == nil {
-		defer s.Close()
+		defer func() { _ = s.Close() }()
 		if err = wire.Write(s, r, maxReceiptSize); err == nil {
 			return
 		}

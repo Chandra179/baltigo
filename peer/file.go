@@ -18,7 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/wire"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -26,11 +26,11 @@ import (
 )
 
 const (
-	// FILE_PROTOCOL transfers files directly between two peers.
-	FILE_PROTOCOL = "/private-chat/file/1.0.0"
+	// FileProtocol transfers files directly between two peers.
+	FileProtocol = "/baltigo/file/1.0.0"
 
 	fileOfferVersion = 1
-	fileDomain       = "p2pchat-file-v1"
+	fileDomain       = "baltigo-file-v1"
 	maxFrameSize     = 4 << 10 // offers and replies
 	maxFileNameLen   = 100
 
@@ -142,14 +142,14 @@ type idleReader struct {
 }
 
 func (d idleReader) Read(b []byte) (int, error) {
-	d.s.SetReadDeadline(time.Now().Add(fileIdleTimeout))
+	_ = d.s.SetReadDeadline(time.Now().Add(fileIdleTimeout))
 	return d.r.Read(b)
 }
 
 type idleWriter struct{ s network.Stream }
 
 func (d idleWriter) Write(b []byte) (int, error) {
-	d.s.SetWriteDeadline(time.Now().Add(fileIdleTimeout))
+	_ = d.s.SetWriteDeadline(time.Now().Add(fileIdleTimeout))
 	return d.s.Write(b)
 }
 
@@ -170,15 +170,15 @@ func (p *PeerInfo) downloadDir() string {
 // fileHandler registers the stream handler that receives files.
 func (p *PeerInfo) fileHandler() {
 	p.fileSlots = make(chan struct{}, maxConcurrentReceives)
-	p.Host.SetStreamHandler(FILE_PROTOCOL, func(s network.Stream) {
-		defer s.Close()
+	p.Host.SetStreamHandler(FileProtocol, func(s network.Stream) {
+		defer func() { _ = s.Close() }()
 		remote := s.Conn().RemotePeer()
 		if err := p.receiveFile(s, remote); err != nil {
 			log.Printf("File from %s not received: %v", remote, err)
 			// After a refusal, close gracefully so the reason reaches the sender;
 			// a reset could discard it. Other failures abort the stream.
 			if !errors.As(err, new(errRefused)) {
-				s.Reset()
+				_ = s.Reset()
 			}
 		}
 	})
@@ -190,12 +190,12 @@ type errRefused struct{ reason string }
 func (e errRefused) Error() string { return e.reason }
 
 func refuse(s network.Stream, reason string) error {
-	wire.Write(s, fileReply{Reason: reason}, maxFrameSize)
+	_ = wire.Write(s, fileReply{Reason: reason}, maxFrameSize)
 	return errRefused{reason}
 }
 
 func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
-	s.SetReadDeadline(time.Now().Add(readTimeout))
+	_ = s.SetReadDeadline(time.Now().Add(readTimeout))
 	r := bufio.NewReader(s)
 	var offer FileOffer
 	if err := wire.Read(r, &offer, maxFrameSize); err != nil {
@@ -233,7 +233,7 @@ func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
 	if err != nil {
 		return refuse(s, "recipient cannot store files")
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	part, destName, err := reserveFile(root, safeFileName(offer.Name))
 	if err != nil {
 		return refuse(s, "recipient cannot store files")
@@ -241,9 +241,9 @@ func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
 	partName := destName + ".part"
 	committed := false
 	defer func() {
-		part.Close()
+		_ = part.Close()
 		if !committed {
-			root.Remove(partName)
+			_ = root.Remove(partName)
 		}
 	}()
 
@@ -266,8 +266,8 @@ func (p *PeerInfo) receiveFile(s network.Stream, remote peer.ID) error {
 	}
 	committed = true
 	final := filepath.Join(dir, destName)
-	s.SetWriteDeadline(time.Now().Add(readTimeout))
-	wire.Write(s, fileReply{OK: true}, maxFrameSize) // best effort: the file is already safe
+	_ = s.SetWriteDeadline(time.Now().Add(readTimeout))
+	_ = wire.Write(s, fileReply{OK: true}, maxFrameSize) // best effort: the file is already safe
 
 	p.recordFile(remote, true, destName, offer.Size)
 	if p.OnFile != nil {
@@ -330,7 +330,7 @@ func (p *PeerInfo) SendFile(ctx context.Context, target peer.ID, path string) er
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		return err
@@ -367,19 +367,19 @@ func (p *PeerInfo) transferFile(ctx context.Context, target peer.ID, offer *File
 	// No WithAllowLimitedConn: a relayed connection is capped at ~128 KiB, so we insist on a direct one.
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	s, err := p.Host.NewStream(dialCtx, target, FILE_PROTOCOL)
+	s, err := p.Host.NewStream(dialCtx, target, FileProtocol)
 	if err != nil {
 		return fmt.Errorf("no direct connection to peer (files are not sent through the relay): %w", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
-	s.SetWriteDeadline(time.Now().Add(readTimeout))
+	_ = s.SetWriteDeadline(time.Now().Add(readTimeout))
 	if err := wire.Write(s, offer, maxFrameSize); err != nil {
 		return err
 	}
 	r := bufio.NewReader(s)
 	readReply := func(timeout time.Duration) error {
-		s.SetReadDeadline(time.Now().Add(timeout))
+		_ = s.SetReadDeadline(time.Now().Add(timeout))
 		var reply fileReply
 		if err := wire.Read(r, &reply, maxFrameSize); err != nil {
 			return fmt.Errorf("no answer from peer: %w", err)
@@ -394,12 +394,12 @@ func (p *PeerInfo) transferFile(ctx context.Context, target peer.ID, offer *File
 	}
 	n, err := io.Copy(idleWriter{s}, io.LimitReader(body, offer.Size))
 	if err != nil {
-		s.Reset()
+		_ = s.Reset()
 		return fmt.Errorf("transfer interrupted: %w", err)
 	}
 	if n != offer.Size {
 		// e.g. the file shrank after it was hashed; the receiver is still waiting for the rest
-		s.Reset()
+		_ = s.Reset()
 		return fmt.Errorf("file changed during transfer (sent %d of %d bytes)", n, offer.Size)
 	}
 	return readReply(fileIdleTimeout)

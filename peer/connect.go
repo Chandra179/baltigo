@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
@@ -10,11 +11,10 @@ import (
 
 func (p *PeerInfo) Connect(ctx context.Context, peerInfo peer.AddrInfo, relayID peer.ID) error {
 	if err := p.Host.Connect(ctx, peerInfo); err == nil {
-		fmt.Println("success direct connection")
+		log.Printf("Connected directly to %s", peerInfo.ID)
 		return nil
-	} else {
-		fmt.Println("direct connect failed, trying relay...")
 	}
+	log.Printf("Direct connection to %s failed, trying the relay", peerInfo.ID)
 
 	// If direct fails, try relay connection
 	addrStr := fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", relayID, peerInfo.ID)
@@ -29,6 +29,6 @@ func (p *PeerInfo) Connect(ctx context.Context, peerInfo peer.AddrInfo, relayID 
 	if err := p.Host.Connect(ctx, targetPeer); err != nil {
 		return fmt.Errorf("relay connect failed: %w", err)
 	}
-	fmt.Println("success relay connection")
+	log.Printf("Connected to %s through the relay", peerInfo.ID)
 	return nil
 }

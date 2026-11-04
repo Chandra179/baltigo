@@ -3,16 +3,19 @@ package mailbox
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/baltigo/access"
 
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	bolt "go.etcd.io/bbolt"
 )
 
 func newHost(t *testing.T) host.Host {
@@ -21,7 +24,7 @@ func newHost(t *testing.T) host.Host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	return h
 }
 
@@ -31,7 +34,7 @@ func setup(t *testing.T, allow access.Allowlist) (*Server, host.Host) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	relay := newHost(t)
 	srv.Register(relay)
 	return srv, relay
@@ -88,7 +91,7 @@ func TestUnackedMessagesStay(t *testing.T) {
 	alice, bob := newHost(t), newHost(t)
 	connect(t, alice, relay)
 	connect(t, bob, relay)
-	Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("keep me"))
+	_ = Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("keep me"))
 
 	n, err := Fetch(t.Context(), bob, relay.ID(), func([]byte) bool { return false })
 	if err != nil || n != 0 {
@@ -146,7 +149,7 @@ func TestExpiry(t *testing.T) {
 	alice, bob := newHost(t), newHost(t)
 	connect(t, alice, relay)
 	connect(t, bob, relay)
-	Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("old"))
+	_ = Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("old"))
 
 	srv.now = func() time.Time { return time.Now().Add(TTL + time.Hour) }
 	if got := collect(t, bob, relay); len(got) != 0 {
@@ -154,7 +157,7 @@ func TestExpiry(t *testing.T) {
 	}
 
 	srv.now = time.Now
-	Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("fresh"))
+	_ = Put(t.Context(), alice, relay.ID(), bob.ID(), []byte("fresh"))
 	srv.now = func() time.Time { return time.Now().Add(2 * TTL) }
 	if err := srv.prune(); err != nil {
 		t.Fatal(err)
@@ -182,7 +185,7 @@ func TestExpiryDeletesEveryEntry(t *testing.T) {
 		connect(t, alice, relay)
 		connect(t, bob, relay)
 		for i := range 6 {
-			Put(t.Context(), alice, relay.ID(), bob.ID(), []byte{byte('a' + i)})
+			_ = Put(t.Context(), alice, relay.ID(), bob.ID(), []byte{byte('a' + i)})
 		}
 		srv.now = func() time.Time { return time.Now().Add(TTL + time.Hour) }
 		if viaPrune {
@@ -196,5 +199,33 @@ func TestExpiryDeletesEveryEntry(t *testing.T) {
 		if got := collect(t, bob, relay); len(got) != 0 {
 			t.Errorf("viaPrune=%v: %d expired entries were not deleted", viaPrune, len(got))
 		}
+	}
+}
+
+func TestRecipientCap(t *testing.T) {
+	s, err := NewServer(filepath.Join(t.TempDir(), "mb.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	mk := func() peer.ID {
+		priv, _, _ := crypto.GenerateEd25519Key(nil)
+		id, _ := peer.IDFromPrivateKey(priv)
+		return id
+	}
+	// Fill the recipient table directly to keep the test fast.
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		for i := 0; i < MaxRecipients; i++ {
+			if _, err := tx.Bucket(rootBucket).CreateBucket([]byte(fmt.Sprintf("r%d", i))); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.put(mk(), []byte("x")); !errors.Is(err, ErrFull) {
+		t.Fatalf("put for a new recipient = %v, want ErrFull", err)
 	}
 }

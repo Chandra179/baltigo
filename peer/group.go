@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/store"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -63,8 +63,8 @@ type group struct {
 // neither the group name nor the secret is visible on the network. With an
 // empty secret anyone who knows the group name can read it.
 func deriveGroup(name, secret string) (topic string, aead cipher.AEAD, err error) {
-	key := argon2.IDKey([]byte(secret), []byte("p2pchat-group-v1:"+name), 1, 64*1024, 4, 32)
-	tid, err := hkdf.Key(sha256.New, key, nil, "p2pchat-group-topic", 16)
+	key := argon2.IDKey([]byte(secret), []byte("baltigo-group-v1:"+name), 1, 64*1024, 4, 32)
+	tid, err := hkdf.Key(sha256.New, key, nil, "baltigo-group-topic", 16)
 	if err != nil {
 		return "", nil, err
 	}
@@ -72,7 +72,7 @@ func deriveGroup(name, secret string) (topic string, aead cipher.AEAD, err error
 	if err != nil {
 		return "", nil, err
 	}
-	return "p2pchat/group/" + hex.EncodeToString(tid), aead, nil
+	return "baltigo/group/" + hex.EncodeToString(tid), aead, nil
 }
 
 // seal encrypts text for the group; ad binds the ciphertext to the topic.
@@ -169,7 +169,7 @@ func (p *PeerInfo) JoinGroup(ctx context.Context, name, secret string) error {
 	}
 	sub, err := topic.Subscribe()
 	if err != nil {
-		topic.Close()
+		_ = topic.Close()
 		return err
 	}
 	gctx, cancel := context.WithCancel(p.psCtx)

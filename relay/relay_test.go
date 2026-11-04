@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chandra179/sabaody/config"
-	"github.com/Chandra179/sabaody/mailbox"
+	"github.com/Chandra179/baltigo/config"
+	"github.com/Chandra179/baltigo/mailbox"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -29,12 +29,12 @@ func freePort(t *testing.T) string {
 			t.Fatal(err)
 		}
 		port := l.Addr().(*net.TCPAddr).Port
-		l.Close()
+		_ = l.Close()
 		u, err := net.ListenPacket("udp", "127.0.0.1:"+strconv.Itoa(port))
 		if err != nil {
 			continue
 		}
-		u.Close()
+		_ = u.Close()
 		return strconv.Itoa(port)
 	}
 	t.Fatal("no free port")
@@ -47,7 +47,7 @@ func newPeer(t *testing.T) host.Host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	return h
 }
 
@@ -70,7 +70,7 @@ func startRelay(t *testing.T, allow ...peer.ID) (*Relay, peer.AddrInfo) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	info, err := cfg.RelayAddrInfo()
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestRelayServesPrivateDHT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if err := h.Connect(ctx, info); err != nil {
@@ -166,7 +166,7 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	priv, _, _ := crypto.GenerateEd25519Key(nil)
 	id, _ := peer.IDFromPrivateKey(priv)
 	cfg := &config.Config{RelayIP: "127.0.0.1", RelayPort: freePort(t), RelayID: id, RelayPrivKey: priv,
-		RelayDB: filepath.Join(t.TempDir(), "mailbox.db")}
+		RelayDB: filepath.Join(t.TempDir(), "mailbox.db"), RelayOpen: true}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, cfg) }()
@@ -179,5 +179,15 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after the context was cancelled")
+	}
+}
+
+func TestRunRefusesOpenRelayByDefault(t *testing.T) {
+	priv, _, _ := crypto.GenerateEd25519Key(nil)
+	id, _ := peer.IDFromPrivateKey(priv)
+	cfg := &config.Config{RelayIP: "127.0.0.1", RelayPort: freePort(t), RelayID: id, RelayPrivKey: priv,
+		RelayDB: filepath.Join(t.TempDir(), "mailbox.db")}
+	if err := Run(t.Context(), cfg); err == nil {
+		t.Fatal("Run started an open relay without RELAY_OPEN=true")
 	}
 }

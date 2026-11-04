@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Chandra179/sabaody/cryptoutils"
-	"github.com/Chandra179/sabaody/mailbox"
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/cryptoutils"
+	"github.com/Chandra179/baltigo/mailbox"
+	"github.com/Chandra179/baltigo/wire"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"log"
 	"time"
@@ -17,8 +17,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-// CHAT_PROTOCOL carries signed, length-prefixed messages (see Message).
-const CHAT_PROTOCOL = "/private-chat/2.0.0"
+// ChatProtocol carries signed, length-prefixed messages (see Message).
+const ChatProtocol = "/baltigo/2.0.0"
 
 const (
 	maxMessageSize = 64 << 10 // 64 KiB
@@ -30,32 +30,38 @@ func (p *PeerInfo) ChatHandler() {
 	p.replay = newReplayGuard()
 	p.receiptHandler()
 	p.fileHandler()
-	p.Host.SetStreamHandler(CHAT_PROTOCOL, func(s network.Stream) {
-		defer s.Close()
+	p.Host.SetStreamHandler(ChatProtocol, func(s network.Stream) {
+		defer func() { _ = s.Close() }()
 		if err := s.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
-			s.Reset()
+			_ = s.Reset()
 			return
 		}
 		remote := s.Conn().RemotePeer()
 		msg, err := readFrame(s)
 		if err != nil {
-			fmt.Printf("Failed to receive msg from %s: %v\n", remote, err)
-			s.Reset()
+			log.Printf("Failed to receive msg from %s: %v", remote, err)
+			_ = s.Reset()
 			return
 		}
 		if err := msg.Verify(p.Host.ID(), remote, time.Now(), maxClockSkew); err != nil {
-			fmt.Printf("Rejected msg from %s: %v\n", remote, err)
-			s.Reset()
+			log.Printf("Rejected msg from %s: %v", remote, err)
+			_ = s.Reset()
 			return
 		}
 		if !p.replay.accept(remote, msg.Seq) {
-			fmt.Printf("Rejected replayed msg from %s\n", remote)
-			s.Reset()
+			log.Printf("Rejected replayed msg from %s", remote)
+			_ = s.Reset()
 			return
 		}
 		if p.Store != nil {
-			// Remember it so the same message arriving via the mailbox is dropped.
-			p.Store.MarkSeen(remote, msg.Seq)
+			// Remember it so the same message arriving via the mailbox is dropped,
+			// and drop it if the mailbox already delivered it.
+			isNew, err := p.Store.MarkSeen(remote, msg.Seq)
+			if err != nil {
+				log.Printf("Failed to record message from %s: %v", remote, err)
+			} else if !isNew {
+				return
+			}
 		}
 		p.record(remote, true, false, time.Now(), msg.Seq, msg.Text)
 		go p.sendReceipt(remote, msg.Seq)
@@ -114,12 +120,12 @@ func (p *PeerInfo) sendLive(target peer.ID, msg *Message) error {
 	stream, err := p.Host.NewStream(
 		network.WithAllowLimitedConn(ctx, "reason"),
 		target,
-		CHAT_PROTOCOL,
+		ChatProtocol,
 	)
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	return writeFrame(stream, msg)
 }
 
@@ -185,7 +191,7 @@ func (p *PeerInfo) receiveSealed(priv crypto.PrivKey, blob []byte) (ack, deliver
 	var kind struct {
 		Kind string `json:"kind"`
 	}
-	json.Unmarshal(raw, &kind)
+	_ = json.Unmarshal(raw, &kind)
 	if kind.Kind == kindReceipt {
 		p.receiveSealedReceipt(raw)
 		return true, false

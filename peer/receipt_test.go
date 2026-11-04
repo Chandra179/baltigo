@@ -2,14 +2,14 @@ package peer
 
 import (
 	"bytes"
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/wire"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Chandra179/sabaody/cryptoutils"
-	"github.com/Chandra179/sabaody/mailbox"
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/cryptoutils"
+	"github.com/Chandra179/baltigo/mailbox"
+	"github.com/Chandra179/baltigo/store"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -104,7 +104,7 @@ func TestReceiptsCanBeDisabled(t *testing.T) {
 	}
 	got := make(chan struct{}, 1)
 	bob.OnMessage = func(peer.ID, string) { got <- struct{}{} }
-	alice.SendSimple(bob.Host.ID(), "quiet")
+	_, _ = alice.SendSimple(bob.Host.ID(), "quiet")
 	<-got
 	time.Sleep(500 * time.Millisecond)
 	if d := delivered(t, sa, bob.Host.ID()); len(d) != 1 || d[0] {
@@ -145,7 +145,7 @@ func TestForgedReceiptRejected(t *testing.T) {
 	bob.DisableReceipts = true // so only the forged receipts could mark it delivered
 	got := make(chan struct{}, 1)
 	bob.OnMessage = func(peer.ID, string) { got <- struct{}{} }
-	alice.SendSimple(bob.Host.ID(), "did you get this?")
+	_, _ = alice.SendSimple(bob.Host.ID(), "did you get this?")
 	<-got
 	h, _ := sa.History(bob.Host.ID(), 0)
 	seq := h[0].Seq
@@ -159,12 +159,12 @@ func TestForgedReceiptRejected(t *testing.T) {
 	if err := mallory.Host.Connect(t.Context(), peer.AddrInfo{ID: alice.Host.ID(), Addrs: alice.Host.Addrs()}); err != nil {
 		t.Fatal(err)
 	}
-	s, err := mallory.Host.NewStream(t.Context(), alice.Host.ID(), RECEIPT_PROTOCOL)
+	s, err := mallory.Host.NewStream(t.Context(), alice.Host.ID(), ReceiptProtocol)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wireWrite(t, s, forged)
-	s.Close()
+	_ = s.Close()
 
 	// 2. via the mailbox, sealed to Alice
 	var buf bytes.Buffer
@@ -173,7 +173,7 @@ func TestForgedReceiptRejected(t *testing.T) {
 	blob, _ := cryptoutils.Seal(buf.Bytes(), alicePub)
 	if err := mailbox.Put(t.Context(), mallory.Host, alice.Relay.ID, alice.Host.ID(), blob); err != nil {
 		// Mallory has to be connected to the relay first
-		mallory.Host.Connect(t.Context(), alice.Relay)
+		_ = mallory.Host.Connect(t.Context(), alice.Relay)
 		if err := mailbox.Put(t.Context(), mallory.Host, alice.Relay.ID, alice.Host.ID(), blob); err != nil {
 			t.Fatal(err)
 		}

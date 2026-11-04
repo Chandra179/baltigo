@@ -3,13 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"flag"
 	"fmt"
-	"github.com/Chandra179/sabaody/config"
-	"github.com/Chandra179/sabaody/cryptoutils"
-	mypeer "github.com/Chandra179/sabaody/peer"
-	"github.com/Chandra179/sabaody/relay"
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/config"
+	"github.com/Chandra179/baltigo/cryptoutils"
+	mypeer "github.com/Chandra179/baltigo/peer"
+	"github.com/Chandra179/baltigo/relay"
+	"github.com/Chandra179/baltigo/store"
 	"log"
 	"maps"
 	"os"
@@ -25,6 +27,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 )
+
+// minGroupSecretLen is the length below which a group secret triggers a warning.
+const minGroupSecretLen = 12
 
 type CLIManager struct {
 	peer   *mypeer.PeerInfo
@@ -53,10 +58,19 @@ func (cli *CLIManager) initPeer() error {
 		MaxFileSize:     cli.config.MaxFileSize,
 	})
 	if err != nil {
-		st.Close()
+		_ = st.Close()
 		return fmt.Errorf("failed to init peer: %v", err)
 	}
 	cli.peer = p
+	p.OnMessage = func(from peer.ID, text string) {
+		fmt.Printf("[%s] %s\n", p.DisplayName(from), text)
+	}
+	p.OnFile = func(from peer.ID, path string, size int64) {
+		fmt.Printf("[%s] sent you a file: %s (%d bytes)\n", p.DisplayName(from), path, size)
+	}
+	p.OnGroupMessage = func(group string, from peer.ID, text string) {
+		fmt.Printf("[#%s] %s: %s\n", group, p.DisplayName(from), text)
+	}
 	if err := p.Host.Connect(context.Background(), relayInfo); err != nil {
 		log.Printf("Failed to connect to relay: %v", err)
 	}
@@ -175,7 +189,7 @@ func (cli *CLIManager) handleHistory(args []string) {
 
 func (cli *CLIManager) handleGroup(args []string) {
 	usage := func() {
-		fmt.Println("Usage: group join <name> [secret] | leave <name> | list | say <name> <message> | peers <name> | history <name> [n]")
+		fmt.Println("Usage: group join <name> [secret] | newsecret | leave <name> | list | say <name> <message> | peers <name> | history <name> [n]")
 	}
 	if len(args) == 0 {
 		usage()
@@ -201,7 +215,17 @@ func (cli *CLIManager) handleGroup(args []string) {
 		fmt.Printf("Joined #%s\n", args[1])
 		if secret == "" {
 			fmt.Println("WARNING: no secret given, anyone who knows the group name can read it")
+		} else if len(secret) < minGroupSecretLen {
+			fmt.Printf("WARNING: this secret is short and may be guessed. Create a strong one with: group newsecret\n")
 		}
+	case "newsecret":
+		buf := make([]byte, 16)
+		if _, err := rand.Read(buf); err != nil {
+			fmt.Printf("Failed to generate a secret: %v\n", err)
+			return
+		}
+		fmt.Println("New group secret (share it only over a channel you trust):")
+		fmt.Println(" ", strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf)))
 	case "leave":
 		if len(args) != 2 {
 			usage()
@@ -316,7 +340,7 @@ func (cli *CLIManager) pollMailbox(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		cli.peer.FetchOffline(fetchCtx) // errors are expected while the relay is unreachable
+		_, _ = cli.peer.FetchOffline(fetchCtx) // errors are expected while the relay is unreachable
 		cancel()
 		select {
 		case <-ctx.Done():
@@ -392,13 +416,14 @@ func (cli *CLIManager) handleDHT() {
 		return
 	}
 
-	err = dm.AdvertiseHost(ctx, mypeer.CHAT_PROTOCOL)
+	err = dm.AdvertiseHost(ctx, mypeer.ChatProtocol)
 	if err != nil {
 		fmt.Printf("Failed to advertise host: %v\n", err)
 		return
 	}
+	fmt.Println("Successfully advertised.")
 
-	peers, err := dm.Discovery.FindPeers(ctx, mypeer.CHAT_PROTOCOL)
+	peers, err := dm.Discovery.FindPeers(ctx, mypeer.ChatProtocol)
 	if err != nil {
 		fmt.Printf("Failed to find peers: %v\n", err)
 		return
@@ -501,6 +526,7 @@ func (cli *CLIManager) handleHelp() {
 	fmt.Println("  send <name|peer_id> <msg>   - Send message to peer")
 	fmt.Println("  sendfile <name|peer_id> <path> - Send a file directly (recipient must have you as a contact)")
 	fmt.Println("  group join <name> [secret]  - Join a group chat (same name + secret = same group)")
+	fmt.Println("  group newsecret             - Generate a strong random group secret")
 	fmt.Println("  group say <name> <message>  - Send to a group")
 	fmt.Println("  group list|peers|history|leave - Manage groups")
 	fmt.Println("  sync                        - Check the relay for offline messages")

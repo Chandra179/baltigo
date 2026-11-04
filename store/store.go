@@ -37,7 +37,7 @@ const seenRetention = 30 * 24 * time.Hour
 
 const (
 	maxNameLen = 32
-	kdfInfo    = "p2pchat-store-v1"
+	kdfInfo    = "p2pchat-store-v1" // legacy label, kept so existing databases stay readable
 )
 
 var (
@@ -109,7 +109,7 @@ func Open(path string, priv crypto.PrivKey) (*Store, error) {
 		return nil
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	st := &Store{db: db, aead: aead}
@@ -136,10 +136,10 @@ func (s *Store) MarkSeen(id peer.ID, seq uint64) (bool, error) {
 }
 
 func (s *Store) pruneSeen(now time.Time) {
-	s.db.Update(func(tx *bolt.Tx) error {
+	_ = s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(seenBucket)
 		var old [][]byte
-		b.ForEach(func(k, v []byte) error {
+		_ = b.ForEach(func(k, v []byte) error {
 			if len(v) == 8 && now.Sub(time.Unix(int64(binary.BigEndian.Uint64(v)), 0)) > seenRetention {
 				old = append(old, append([]byte(nil), k...))
 			}
@@ -273,7 +273,7 @@ func (s *Store) Resolve(nameOrID string) (peer.ID, error) {
 // NameOf returns the contact name for id, or "" if it is not a contact.
 func (s *Store) NameOf(id peer.ID) string {
 	var name string
-	s.db.View(func(tx *bolt.Tx) error {
+	_ = s.db.View(func(tx *bolt.Tx) error {
 		if v := tx.Bucket(contactsBucket).Get([]byte(id)); v != nil {
 			if pt, err := s.open(v, []byte(id)); err == nil {
 				name = string(pt)

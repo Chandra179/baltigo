@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Chandra179/sabaody/config"
+	"github.com/Chandra179/baltigo/config"
+	"log"
 	"time"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -60,7 +61,7 @@ func (d *DHTManager) AdvertiseHost(ctx context.Context, rendezvous string) error
 	if err != nil {
 		return err
 	}
-	fmt.Println("Successfully advertised. TTL:", ttl)
+	log.Printf("Advertised on the DHT, TTL %s", ttl)
 	return nil
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Chandra179/sabaody/cryptoutils"
+	"github.com/Chandra179/baltigo/cryptoutils"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -24,12 +24,12 @@ func setEnv(t *testing.T, vars map[string]string) {
 	t.Chdir(t.TempDir())
 	for _, k := range envKeys {
 		old, had := os.LookupEnv(k)
-		os.Unsetenv(k)
+		_ = os.Unsetenv(k)
 		t.Cleanup(func() {
 			if had {
-				os.Setenv(k, old)
+				_ = os.Setenv(k, old)
 			} else {
-				os.Unsetenv(k)
+				_ = os.Unsetenv(k)
 			}
 		})
 	}
@@ -186,7 +186,7 @@ func TestDotEnvFile(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, k := range []string{"PEER_ID", "RELAY_PEER_ID", "RELAY_IP", "RELAY_TCP_PORT"} {
-			os.Unsetenv(k)
+			_ = os.Unsetenv(k)
 		}
 	})
 	c, err := LoadConfig(ModePeer)

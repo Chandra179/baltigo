@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/wire"
 	"io"
 	"sync"
 	"time"
@@ -17,7 +17,7 @@ const (
 	messageVersion = 1
 	// maxClockSkew bounds how far a message timestamp may differ from our clock.
 	maxClockSkew = 5 * time.Minute
-	signDomain   = "p2pchat-msg-v1"
+	signDomain   = "baltigo-msg-v1"
 )
 
 // Message is a signed chat message. The signature covers the sender, the

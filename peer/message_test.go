@@ -2,7 +2,7 @@ package peer
 
 import (
 	"bytes"
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/store"
 	"path/filepath"
 	"testing"
 	"time"
@@ -93,7 +93,7 @@ func newTestPeer(t *testing.T) *PeerInfo {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	p := &PeerInfo{Host: h}
 	p.ChatHandler()
 	return p
@@ -128,12 +128,12 @@ func TestSendReceiveBetweenHosts(t *testing.T) {
 	// a replayed (older seq) message must not be delivered
 	priv := a.Host.Peerstore().PrivKey(a.Host.ID())
 	old, _ := NewSignedMessage(priv, a.Host.ID(), b.Host.ID(), 1, "replay")
-	s, err := a.Host.NewStream(t.Context(), b.Host.ID(), CHAT_PROTOCOL)
+	s, err := a.Host.NewStream(t.Context(), b.Host.ID(), ChatProtocol)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFrame(s, old)
-	s.Close()
+	_ = writeFrame(s, old)
+	_ = s.Close()
 	select {
 	case r := <-got:
 		t.Fatalf("replayed message delivered: %+v", r)
@@ -148,7 +148,7 @@ func TestMessagesArePersisted(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { st.Close() })
+		t.Cleanup(func() { _ = st.Close() })
 		p.Store = st
 		return st
 	}

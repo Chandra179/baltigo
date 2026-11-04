@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Chandra179/sabaody/cryptoutils"
-	"github.com/Chandra179/sabaody/mailbox"
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/cryptoutils"
+	"github.com/Chandra179/baltigo/mailbox"
+	"github.com/Chandra179/baltigo/store"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -23,12 +23,12 @@ func offlineSetup(t *testing.T) (alice, bob *PeerInfo, sa, sb *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	srv, err := mailbox.NewServer(filepath.Join(t.TempDir(), "mb.db"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.Register(r)
 	relayInfo := peer.AddrInfo{ID: r.ID(), Addrs: r.Addrs()}
 
@@ -39,7 +39,7 @@ func offlineSetup(t *testing.T) (alice, bob *PeerInfo, sa, sb *store.Store) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { st.Close() })
+		t.Cleanup(func() { _ = st.Close() })
 		p.Store = st
 		return p, st
 	}
@@ -92,7 +92,7 @@ func TestOfflineReplayAndForgeryRejected(t *testing.T) {
 	priv := alice.Host.Peerstore().PrivKey(alice.Host.ID())
 	msg, _ := NewSignedMessage(priv, alice.Host.ID(), bob.Host.ID(), alice.nextSeq(), "once")
 	var buf bytes.Buffer
-	writeFrame(&buf, msg)
+	_ = writeFrame(&buf, msg)
 	bobPub, _ := bob.Host.ID().ExtractPublicKey()
 	blob, _ := cryptoutils.Seal(buf.Bytes(), bobPub)
 
@@ -108,7 +108,7 @@ func TestOfflineReplayAndForgeryRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	alice.Host.Connect(t.Context(), alice.Relay)
+	_ = alice.Host.Connect(t.Context(), alice.Relay)
 
 	put(blob)
 	fetch()
@@ -123,7 +123,7 @@ func TestOfflineReplayAndForgeryRejected(t *testing.T) {
 	mpriv := mallory.Host.Peerstore().PrivKey(mallory.Host.ID())
 	forged, _ := NewSignedMessage(mpriv, alice.Host.ID(), bob.Host.ID(), mallory.nextSeq(), "send me money")
 	buf.Reset()
-	writeFrame(&buf, forged)
+	_ = writeFrame(&buf, forged)
 	blob, _ = cryptoutils.Seal(buf.Bytes(), bobPub)
 	put(blob)
 	fetch()
@@ -133,7 +133,7 @@ func TestOfflineReplayAndForgeryRejected(t *testing.T) {
 		Seq: alice.nextSeq(), Timestamp: time.Now().Add(-2 * mailbox.TTL).UnixMilli(), Text: "stale"}
 	old.Sig, _ = priv.Sign(old.signedBytes())
 	buf.Reset()
-	writeFrame(&buf, old)
+	_ = writeFrame(&buf, old)
 	blob, _ = cryptoutils.Seal(buf.Bytes(), bobPub)
 	put(blob)
 	fetch()
@@ -168,5 +168,33 @@ func TestLiveMessageThenMailboxDuplicateDropped(t *testing.T) {
 	}
 	if delivered.Load() != 1 {
 		t.Errorf("delivered %d times, want 1", delivered.Load())
+	}
+}
+
+// A message that already arrived through the mailbox must not be shown again
+// when the same message then arrives live.
+func TestLiveAfterMailboxIsNotDuplicated(t *testing.T) {
+	alice, bob, _, _ := offlineSetup(t)
+	var got atomic.Int32
+	bob.OnMessage = func(peer.ID, string) { got.Add(1) }
+
+	priv := alice.Host.Peerstore().PrivKey(alice.Host.ID())
+	msg, err := NewSignedMessage(priv, alice.Host.ID(), bob.Host.ID(), alice.nextSeq(), "once")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := alice.queue(bob.Host.ID(), msg); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := bob.FetchOffline(t.Context()); err != nil || n != 1 {
+		t.Fatalf("FetchOffline = %d, %v", n, err)
+	}
+	if err := bob.Host.Connect(t.Context(), peer.AddrInfo{ID: alice.Host.ID(), Addrs: alice.Host.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	_ = alice.sendLive(bob.Host.ID(), msg)
+	time.Sleep(300 * time.Millisecond)
+	if got.Load() != 1 {
+		t.Fatalf("message delivered %d times, want 1", got.Load())
 	}
 }

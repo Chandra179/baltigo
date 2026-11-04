@@ -2,13 +2,13 @@ package peer
 
 import (
 	"encoding/hex"
-	"github.com/Chandra179/sabaody/access"
+	"github.com/Chandra179/baltigo/access"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/Chandra179/sabaody/store"
+	"github.com/Chandra179/baltigo/store"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -43,7 +43,7 @@ func newGroupPeer(t *testing.T) (*PeerInfo, *inbox, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	p.Store = st
 	in := &inbox{}
 	p.OnGroupMessage = in.add
@@ -198,7 +198,7 @@ func TestGroupLeaveAndErrors(t *testing.T) {
 		t.Errorf("leave twice: %v", err)
 	}
 	waitFor(t, "b to disappear from a's view", func() bool { return a.Groups()["g"] == 0 })
-	a.SendGroup("g", "anyone?")
+	_, _ = a.SendGroup("g", "anyone?")
 	time.Sleep(300 * time.Millisecond)
 	if len(inb.all()) != 0 {
 		t.Errorf("message delivered after leaving: %+v", inb.all())
@@ -216,7 +216,7 @@ func TestGroupAllowlist(t *testing.T) {
 	// b only accepts group messages from a peer on its allowlist; a is not on it
 	_, other := newIdentity(t)
 	b.allow = newAllow(other)
-	a.SendGroup("g", "blocked")
+	_, _ = a.SendGroup("g", "blocked")
 	time.Sleep(500 * time.Millisecond)
 	if len(inb.all()) != 0 {
 		t.Errorf("message from non-allowlisted peer delivered: %+v", inb.all())
@@ -238,7 +238,7 @@ func TestDeriveGroup(t *testing.T) {
 		t.Error("different secret or name gave the same topic")
 	}
 	for _, topic := range []string{t1, t3, t4} {
-		if len(topic) != len("p2pchat/group/")+32 {
+		if len(topic) != len("baltigo/group/")+32 {
 			t.Errorf("unexpected topic %q", topic)
 		}
 	}
@@ -252,12 +252,12 @@ func TestDeriveGroupKnownAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantTopic = "p2pchat/group/7fea111e0e9a6736aac695a96b653db1"
+	const wantTopic = "baltigo/group/f132701582273e90c6f6140bf44e1570"
 	if topic != wantTopic {
 		t.Errorf("topic = %s, want %s", topic, wantTopic)
 	}
 	ct := aead.Seal(nil, make([]byte, aead.NonceSize()), []byte("x"), []byte(topic))
-	if got := hex.EncodeToString(ct); got != "a35dc94e6f862f0f95eb392b26a83237d6" {
+	if got := hex.EncodeToString(ct); got != "c6502f20c57a4019e0392f86c879b30af0" {
 		t.Errorf("ciphertext = %s: group key changed", got)
 	}
 }

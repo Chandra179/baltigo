@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Chandra179/sabaody/access"
-	"github.com/Chandra179/sabaody/wire"
+	"github.com/Chandra179/baltigo/access"
+	"github.com/Chandra179/baltigo/wire"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -24,12 +24,15 @@ import (
 )
 
 const (
-	Protocol = "/p2pchat/mailbox/1.0.0"
+	Protocol = "/baltigo/mailbox/1.0.0"
 
 	// MaxBlob is the largest sealed message accepted.
 	MaxBlob = 70 << 10
 	// MaxPerRecipient bounds how many messages wait for one recipient.
 	MaxPerRecipient = 200
+	// MaxRecipients bounds how many recipients can have messages waiting at once,
+	// so an open relay cannot be filled by messages for made-up peers.
+	MaxRecipients = 10000
 	// TTL is how long an undelivered message is kept.
 	TTL = 7 * 24 * time.Hour
 
@@ -86,7 +89,7 @@ func NewServer(path string, allow access.Allowlist) (*Server, error) {
 		return err
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return &Server{db: db, allow: allow, now: time.Now, stop: make(chan struct{})}, nil
@@ -117,9 +120,9 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handle(st network.Stream) {
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if err := st.SetDeadline(s.now().Add(sessionTimeout)); err != nil {
-		st.Reset()
+		_ = st.Reset()
 		return
 	}
 	remote := st.Conn().RemotePeer()
@@ -181,9 +184,16 @@ func (s *Server) put(to peer.ID, blob []byte) error {
 		return ErrTooLarge
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.Bucket(rootBucket).CreateBucketIfNotExists([]byte(to))
-		if err != nil {
-			return err
+		root := tx.Bucket(rootBucket)
+		b := root.Bucket([]byte(to))
+		if b == nil {
+			if root.Stats().BucketN-1 >= MaxRecipients {
+				return ErrFull
+			}
+			var err error
+			if b, err = root.CreateBucket([]byte(to)); err != nil {
+				return err
+			}
 		}
 		n := 0
 		c := b.Cursor()
