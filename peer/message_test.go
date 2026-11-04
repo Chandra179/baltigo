@@ -81,8 +81,16 @@ func TestFrameRoundTripAndLimits(t *testing.T) {
 func TestReplayGuard(t *testing.T) {
 	g := newReplayGuard()
 	_, id := newIdentity(t)
-	if !g.accept(id, 5) || g.accept(id, 5) || g.accept(id, 4) || !g.accept(id, 6) {
-		t.Error("replay guard wrong")
+	now := time.Now()
+	if !g.accept(id, 5, now) || g.accept(id, 5, now) {
+		t.Error("a repeated sequence number must be rejected")
+	}
+	// A lower number that was never seen is fine: the sender's clock may have moved back.
+	if !g.accept(id, 4, now) || !g.accept(id, 6, now) {
+		t.Error("unseen sequence numbers must be accepted")
+	}
+	if !g.accept(id, 5, now.Add(replayRetention+time.Second)) {
+		t.Error("an entry past the retention window should be forgotten")
 	}
 }
 
@@ -125,15 +133,28 @@ func TestSendReceiveBetweenHosts(t *testing.T) {
 		}
 	}
 
-	// a replayed (older seq) message must not be delivered
+	// a message with a lower sequence number is fine (the sender's clock may have
+	// moved back), but sending the very same message again must not be delivered
 	priv := a.Host.Peerstore().PrivKey(a.Host.ID())
 	old, _ := NewSignedMessage(priv, a.Host.ID(), b.Host.ID(), 1, "replay")
-	s, err := a.Host.NewStream(t.Context(), b.Host.ID(), ChatProtocol)
-	if err != nil {
-		t.Fatal(err)
+	send := func() {
+		s, err := a.Host.NewStream(t.Context(), b.Host.ID(), ChatProtocol)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = writeFrame(s, old)
+		_ = s.Close()
 	}
-	_ = writeFrame(s, old)
-	_ = s.Close()
+	send()
+	select {
+	case r := <-got:
+		if r.text != "replay" {
+			t.Fatalf("got %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("message with a lower sequence number was not delivered")
+	}
+	send()
 	select {
 	case r := <-got:
 		t.Fatalf("replayed message delivered: %+v", r)

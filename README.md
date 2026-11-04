@@ -17,7 +17,7 @@ See [architecture.md](architecture.md) for how it works and what each part can a
 
 ## Requirements
 
-Go 1.27 or newer (see `go.mod`). One machine with a public IP runs the relay; a small VPS is enough. Open its port for **both TCP and UDP** (UDP carries QUIC).
+Prebuilt binaries for Linux, macOS and Windows are attached to each [release](https://github.com/Chandra179/baltigo/releases); otherwise build from source with Go 1.27 or newer (see `go.mod`). One machine with a public IP runs the relay; a small VPS is enough. Open its port for **both TCP and UDP** (UDP carries QUIC).
 
 ## Quick start
 
@@ -127,7 +127,7 @@ Type `help` in peer mode to list them.
 | `history <name\|peer_id> [n]` | Show the last n messages (default 20) |
 | `sync` | Collect messages left for you on the relay (also done at startup and every 30 seconds) |
 | `sendfile <name\|peer_id> <path>` | Send a file directly to a contact |
-| `group join <name> [secret]`, `group say <name> <message>`, `group list`, `group peers <name>`, `group history <name> [n]`, `group leave <name>` | Group chat |
+| `group newsecret`, `group join <name> [secret]`, `group say <name> <message>`, `group list`, `group peers <name>`, `group history <name> [n]`, `group leave <name>` | Group chat |
 | `dht` | Advertise yourself and discover peers |
 | `con <name\|peer_id>` | Connect to a peer (direct, else via the relay) |
 | `ping <name\|peer_id>` | Measure round-trip time |
@@ -159,6 +159,17 @@ Type `help` in peer mode to list them.
 **Local data**
 - Contact names and message text are encrypted in the database with a key derived from your identity key. This protects the file on its own, not against someone who also has your `.env`. If you change `PEER_ID`, the old data cannot be read.
 - Only one process can open a database at a time.
+
+## Running the relay in a container
+
+```bash
+docker build -t baltigo .
+docker run --env-file .env -p 4001:4001/tcp -p 4001:4001/udp -v baltigo-data:/data baltigo
+```
+
+## License
+
+[MIT](LICENSE)
 
 ## Development
 

@@ -1,0 +1,7 @@
+.git
+.env
+*.db
+peers_db
+relay_db
+downloads
+bin

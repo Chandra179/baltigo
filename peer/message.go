@@ -112,23 +112,41 @@ func readFrame(r io.Reader) (*Message, error) {
 	return &m, nil
 }
 
-// replayGuard rejects messages whose sequence number is not greater than the
-// highest one already accepted from the same sender.
+// replayRetention is how long a seen message is remembered. A message is only
+// accepted while its timestamp is within maxClockSkew of our clock, so after
+// this long a replay would be rejected by the timestamp check anyway.
+const replayRetention = 3 * maxClockSkew
+
+// replayGuard rejects a message whose sequence number was already accepted from
+// the same sender recently. It tracks exact values rather than a high-water
+// mark, so a sender whose clock moves backwards is not locked out.
 type replayGuard struct {
 	mu   sync.Mutex
-	last map[peer.ID]uint64
+	seen map[peer.ID]map[uint64]time.Time
 }
 
 func newReplayGuard() *replayGuard {
-	return &replayGuard{last: make(map[peer.ID]uint64)}
+	return &replayGuard{seen: make(map[peer.ID]map[uint64]time.Time)}
 }
 
-func (g *replayGuard) accept(id peer.ID, seq uint64) bool {
+func (g *replayGuard) accept(id peer.ID, seq uint64, now time.Time) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if seq <= g.last[id] {
+	m := g.seen[id]
+	if m == nil {
+		m = make(map[uint64]time.Time)
+		g.seen[id] = m
+	}
+	if len(m) > 256 {
+		for k, t := range m {
+			if now.Sub(t) > replayRetention {
+				delete(m, k)
+			}
+		}
+	}
+	if t, dup := m[seq]; dup && now.Sub(t) <= replayRetention {
 		return false
 	}
-	g.last[id] = seq
+	m[seq] = now
 	return true
 }

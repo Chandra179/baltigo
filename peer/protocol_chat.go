@@ -48,7 +48,7 @@ func (p *PeerInfo) ChatHandler() {
 			_ = s.Reset()
 			return
 		}
-		if !p.replay.accept(remote, msg.Seq) {
+		if !p.replay.accept(remote, msg.Seq, time.Now()) {
 			log.Printf("Rejected replayed msg from %s", remote)
 			_ = s.Reset()
 			return

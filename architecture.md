@@ -66,14 +66,14 @@ receiver: sender == authenticated connection peer?        no -> reject
           recipient == me?                                no -> reject
           |now - timestamp| within allowed window?        no -> reject
           signature valid for the sender's public key?    no -> reject
-          sequence higher than the last from this sender? no -> reject (replay)
+          sequence number not seen from this sender recently? no -> reject (replay)
           -> deliver, store, send receipt
 ```
 
 - **Two layers:** The encrypted connection protects the content in transit and authenticates the peer. The signature is end-to-end and survives storage and forwarding, which is what lets the same message be delivered through the mailbox.
 - **Domain separation:** A fixed tag in front of every signed object ensures a signature made for a message can never be replayed as a receipt or a file offer.
 - **Binding to the recipient:** The recipient is inside the signed data, so a captured message cannot be redirected to someone else.
-- **Replay defence:** Sequence numbers come from the clock and only ever increase. The receiver keeps the highest value seen per sender while online, and a persistent set of seen messages for mailbox deliveries. A timestamp window bounds how old a message can be.
+- **Replay defence:** Each message carries a sequence number taken from the clock. The receiver remembers the numbers it accepted from each sender for a few minutes (and a persistent set for mailbox deliveries), and rejects a repeat. It does not require numbers to increase, so a sender whose clock moves backwards is not locked out. A timestamp window bounds how old a message can be.
 
 ## Offline delivery
 
